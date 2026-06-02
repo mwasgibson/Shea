@@ -34,7 +34,8 @@ shea-core/
 ├── modules/
 ├── services/
 ├── utils/
-├── main.py
+├── backend/
+     main.py
 └── README.md
 ```
 
