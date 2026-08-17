@@ -11,11 +11,14 @@ from .models import (
     Intent,
     Plan,
     PlanStep,
+    RecoveryAttempt,
     Request,
     RiskAssessment,
     Task,
+    ToolExecutionRecord,
     ToolRequest,
     ToolResponse,
+    VerificationRecord,
 )
 
 __all__ = [
@@ -29,9 +32,12 @@ __all__ = [
     "Intent",
     "Plan",
     "PlanStep",
+    "RecoveryAttempt",
     "Request",
     "RiskAssessment",
     "Task",
+    "ToolExecutionRecord",
     "ToolRequest",
     "ToolResponse",
+    "VerificationRecord",
 ]

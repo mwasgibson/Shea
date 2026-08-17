@@ -4,9 +4,10 @@ from dataclasses import dataclass
 
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
-from shea.contracts.models import Task, ToolRequest, ToolResponse
+from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
-from shea.ports.repositories import DecisionRepository
+from shea.ports.id_generator import IdGenerator
+from shea.ports.repositories import DecisionRepository, ToolExecutionRepository
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 
 _ADVANCE_EVENT_BY_OUTCOME: dict[ExecutionOutcome, str] = {
@@ -72,12 +73,16 @@ class ExecutionService:
         tool_executor: ToolExecutor,
         orchestrator: Orchestrator,
         decision_repository: DecisionRepository,
+        tool_execution_repository: ToolExecutionRepository,
         audit: AuditRecorder,
+        id_generator: IdGenerator,
     ) -> None:
         self._tool_executor = tool_executor
         self._orchestrator = orchestrator
         self._decisions = decision_repository
+        self._tool_executions = tool_execution_repository
         self._audit = audit
+        self._ids = id_generator
 
     def execute(self, task: Task, request: ToolRequest) -> ExecutionOutcomeRecord:
         if task.state is not TaskState.RUNNING:
@@ -102,12 +107,36 @@ class ExecutionService:
                 task_id=task.id,
                 metadata={"tool": request.tool, "missing": sorted(exc.missing_capabilities)},
             )
+            self._tool_executions.save(
+                ToolExecutionRecord(
+                    id=self._ids.new_id(),
+                    task_id=task.id,
+                    tool=request.tool,
+                    action=request.action,
+                    outcome=ExecutionOutcome.FAILURE,
+                    success=False,
+                    error=str(exc),
+                )
+            )
             failed_task = self._orchestrator.advance(task.id, "execution_failed")
             return ExecutionOutcomeRecord(
                 response=ToolResponse(success=False, error=str(exc)),
                 outcome=ExecutionOutcome.FAILURE,
                 task=failed_task,
             )
+
+        self._tool_executions.save(
+            ToolExecutionRecord(
+                id=self._ids.new_id(),
+                task_id=task.id,
+                tool=request.tool,
+                action=request.action,
+                outcome=result.outcome,
+                success=result.response.success,
+                data=result.response.data,
+                error=result.response.error,
+            )
+        )
 
         event = _ADVANCE_EVENT_BY_OUTCOME[result.outcome]
         self._audit.record(

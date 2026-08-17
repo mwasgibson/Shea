@@ -5,8 +5,11 @@ from .repositories import (
     AuthorizationRepository,
     DecisionRepository,
     PlanRepository,
+    RecoveryAttemptRepository,
     RiskAssessmentRepository,
     TaskRepository,
+    ToolExecutionRepository,
+    VerificationRepository,
 )
 
 __all__ = [
@@ -16,6 +19,9 @@ __all__ = [
     "AuthorizationRepository",
     "DecisionRepository",
     "PlanRepository",
+    "RecoveryAttemptRepository",
     "RiskAssessmentRepository",
     "TaskRepository",
+    "ToolExecutionRepository",
+    "VerificationRepository",
 ]

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .enums import RiskLevel, TaskState
+from .enums import RiskLevel, TaskState, ExecutionOutcome
 
 # NOTE on scope: several of these contracts (Intent, Plan, Decision,
 # RiskAssessment, Authorization) describe the *shape* that later phases
@@ -173,3 +173,59 @@ class ToolResponse:
     data: Any = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+
+
+@dataclass
+class ToolExecutionRecord:
+    """Persisted record of one tool invocation — technical doc Section
+    7.2's "Tool Execution" entity. Kept separate from the audit log so
+    VerificationService has something structured to read (`data`, in
+    particular) rather than re-parsing audit metadata. `data` must be
+    JSON-serializable for records that will be persisted; non-serializable
+    values are stored via `str()` as a fallback (see the SQLite adapter).
+    """
+
+    id: str
+    task_id: str
+    tool: str
+    action: str
+    outcome: ExecutionOutcome
+    success: bool
+    data: Any = None
+    error: str | None = None
+
+
+@dataclass
+class VerificationRecord:
+    """Confirmation that an intended result actually occurred — technical
+    doc Section 7.2's "Verification" entity. `verified` is never inferred
+    directly from `ToolExecutionRecord.success` by the persistence layer;
+    it is whatever a Verifier (shea.verification) decided, which may or
+    may not agree with the tool's own report — Appendix B: "EXECUTION
+    SUCCESS != VERIFIED SUCCESS".
+    """
+
+    id: str
+    task_id: str
+    verified: bool
+    method: str
+    explanation: str = ""
+
+
+@dataclass
+class RecoveryAttempt:
+    """One attempt to recover a FAILED task — technical doc Section 15's
+    Saga-Style Recovery. `resolved`/`recovered` stay unset until
+    `RecoveryService.resolve_recovery` runs a Compensator and records what
+    it actually found — never optimistically set to True by anything else,
+    per Constraint 5: "Rollback must never be claimed successful without
+    verification."
+    """
+
+    id: str
+    task_id: str
+    attempt_number: int
+    resolved: bool = False
+    recovered: bool | None = None
+    method: str = ""
+    explanation: str = ""

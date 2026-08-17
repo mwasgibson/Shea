@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from shea.contracts.models import AuditEvent, Authorization, Decision, Plan, RiskAssessment, Task
+from shea.contracts.models import (
+    AuditEvent,
+    Authorization,
+    Decision,
+    Plan,
+    RecoveryAttempt,
+    RiskAssessment,
+    Task,
+    ToolExecutionRecord,
+    VerificationRecord,
+)
 
 
 class TaskRepository(Protocol):
@@ -64,3 +74,41 @@ class AuditSink(Protocol):
     """
 
     def record(self, event: AuditEvent) -> None: ...
+
+
+class ToolExecutionRepository(Protocol):
+    """Persists ToolExecutionRecord — technical doc Section 7.2's "Tool
+    Execution" entity. A task may accumulate more than one record over
+    retries, so this is append-only and listed, like AuthorizationRepository.
+    """
+
+    def save(self, record: ToolExecutionRecord) -> None: ...
+
+    def list_by_task(self, task_id: str) -> list[ToolExecutionRecord]: ...
+
+    def get_latest_by_task(self, task_id: str) -> ToolExecutionRecord | None: ...
+
+
+class VerificationRepository(Protocol):
+    """Persists VerificationRecord — technical doc Section 7.2's
+    "Verification" entity.
+    """
+
+    def save(self, record: VerificationRecord) -> None: ...
+
+    def list_by_task(self, task_id: str) -> list[VerificationRecord]: ...
+
+    def get_latest_by_task(self, task_id: str) -> VerificationRecord | None: ...
+
+
+class RecoveryAttemptRepository(Protocol):
+    """Persists RecoveryAttempt records, one per retry — used both to
+    enforce a bounded number of attempts and to record each attempt's
+    eventual compensation outcome.
+    """
+
+    def save(self, attempt: RecoveryAttempt) -> None: ...
+
+    def list_by_task(self, task_id: str) -> list[RecoveryAttempt]: ...
+
+    def get_latest_by_task(self, task_id: str) -> RecoveryAttempt | None: ...
