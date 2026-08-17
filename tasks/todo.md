@@ -139,3 +139,71 @@ that gives `capabilities` (currently just opaque strings passed into
 `DecisionService`) a real backing — actual tools that declare their
 required capabilities per technical doc Section 10.4's `Tool` contract —
 and the first subsystem that does something once `RUNNING` is reached.
+
+---
+
+## Phase 3: Tool Registry + Executor
+
+- [x] Contracts: `ToolRequest`/`ToolResponse` (Section 8.4); `Decision.capabilities`
+      field so authorized capabilities are persisted, not just passed around at
+      runtime
+- [x] State machine: added `execution_unknown` event (`RUNNING` -> `BLOCKED`) so
+      UNKNOWN outcomes never collapse into `FAILED`
+- [x] `ToolDeclaration` + `ToolRegistry` — capability profile + lookup, no
+      authorization logic of its own
+- [x] `ToolExecutor` — capability gate BEFORE handler lookup; distinguishes
+      SUCCESS / FAILURE / UNKNOWN (`UnknownOutcomeError` for the latter)
+- [x] `ExecutionService` — looks up authorized capabilities from the persisted
+      Decision (not a caller-supplied value); advances the orchestrator based on
+      outcome; audits every attempt including capability denials
+- [x] SQLite migration 0003 (decisions.capabilities column) + repository update
+- [x] Unit tests: registry (6), executor (6), execution service (8)
+- [x] Property test: handler fires iff required capabilities ⊆ authorized
+      capabilities, across randomized capability set combinations
+- [x] Full suite verified: 89/89 pytest, mypy --strict clean, ruff clean
+
+### Phase 3 Review
+
+**Verified 2026-08-17 (fresh venv + fresh extraction):**
+
+- `pytest`: 89/89 passed (68 from Phase 1+2, 21 new)
+- `mypy --strict`: clean across all 40 source files
+- `ruff check .`: clean
+
+**What the tests actually prove:**
+
+- `test_unauthorized_capability_never_reaches_handler` — the handler
+  function itself is never called when required capabilities aren't a
+  subset of authorized ones, verified with a call-recording spy, not just
+  an exception assertion.
+- The property test sweeps every combination of `required` vs.
+  `authorized` capability sets (both randomized) and confirms the handler
+  fires exactly when `required <= authorized` — never partially.
+- `test_unknown_outcome_error_is_unknown_not_failure` and
+  `test_unknown_outcome_advances_task_to_blocked_not_failed` — UNKNOWN
+  stays distinct from FAILURE end-to-end, from the executor through to
+  the task's actual persisted state.
+- `test_execution_without_decision_raises` — even though only
+  `DecisionService` can currently move a task to `RUNNING`, `ExecutionService`
+  doesn't trust that invariant blindly; it checks for a persisted
+  `Decision` and fails loudly if one is missing.
+
+**Known simplifications, intentional for Phase 3:**
+
+- No sandboxing, resource limits, or filesystem/network scoping — those
+  are the Security & Trust phase's job (research doc Section 10/11).
+  `ExecutionService` is the orchestration layer around that boundary, not
+  the boundary itself.
+- No `tool_executions` persistence table yet — execution attempts are
+  traceable via `audit_events`, which was judged sufficient for Phase 3's
+  scope. A dedicated table becomes worth adding once Verification &
+  Recovery needs richer per-attempt state than the audit log carries.
+- One tool call per `ExecutionService.execute()` — multi-step plan
+  execution (looping over `PlanStep`s) is Planning/Orchestration's job
+  once that subsystem exists.
+
+**Next natural step:** Intent Understanding & Planning is the last major
+piece before there's a real LLM in the loop — or, if you'd rather harden
+what exists first, Verification & Recovery (the `VERIFYING -> COMPLETED`
+half of the state machine, currently unimplemented) is a smaller, more
+self-contained slice.

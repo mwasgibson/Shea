@@ -13,6 +13,7 @@ from shea.core.orchestrator import Orchestrator
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
+from shea.execution.service import ExecutionService
 from shea.persistence.sqlite.audit_sink import SqliteAuditSink
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.connection import open_connection
@@ -23,6 +24,8 @@ from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentReposito
 from shea.persistence.sqlite.task_repository import SqliteTaskRepository
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
+from shea.tools.executor import ToolExecutor
+from shea.tools.registry import ToolRegistry
 
 
 class FrozenClock(Clock):
@@ -179,3 +182,43 @@ def ready_task(orchestrator: Orchestrator) -> Task:
     task = orchestrator.create_task(session_id="session-1", request_id="req-1")
     orchestrator.advance(task.id, "start_planning")
     return orchestrator.advance(task.id, "plan_ready")
+
+
+@pytest.fixture
+def tool_registry() -> ToolRegistry:
+    return ToolRegistry()
+
+
+@pytest.fixture
+def tool_executor(tool_registry: ToolRegistry) -> ToolExecutor:
+    return ToolExecutor(tool_registry)
+
+
+@pytest.fixture
+def execution_service(
+    tool_executor: ToolExecutor,
+    orchestrator: Orchestrator,
+    decision_repository: SqliteDecisionRepository,
+    audit_recorder: AuditRecorder,
+) -> ExecutionService:
+    return ExecutionService(
+        tool_executor=tool_executor,
+        orchestrator=orchestrator,
+        decision_repository=decision_repository,
+        audit=audit_recorder,
+    )
+
+
+@pytest.fixture
+def running_task(decision_service: DecisionService, ready_task: Task) -> Task:
+    """A task carried all the way to RUNNING via the real DecisionService,
+    with a SAFE-risk decision that auto-authorizes — the state
+    ExecutionService expects to receive a task in. Uses `weather.lookup`,
+    which matches no capability in either default policy list, keeping
+    this fixture's authorized-capabilities set deliberately empty so
+    tests can control exactly what gets authorized.
+    """
+    outcome = decision_service.evaluate_and_authorize(
+        ready_task, capabilities=frozenset({"weather.lookup"})
+    )
+    return outcome.task

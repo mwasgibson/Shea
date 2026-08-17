@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from shea.contracts.enums import RiskLevel
@@ -15,16 +16,17 @@ class SqliteDecisionRepository:
             """
             INSERT INTO decisions
                 (id, task_id, recommendation, risk, requires_authorization,
-                 requires_explicit_acknowledgement, override)
+                 requires_explicit_acknowledgement, override, capabilities)
             VALUES
                 (:id, :task_id, :recommendation, :risk, :requires_authorization,
-                 :requires_explicit_acknowledgement, :override)
+                 :requires_explicit_acknowledgement, :override, :capabilities)
             ON CONFLICT(id) DO UPDATE SET
                 recommendation = excluded.recommendation,
                 risk = excluded.risk,
                 requires_authorization = excluded.requires_authorization,
                 requires_explicit_acknowledgement = excluded.requires_explicit_acknowledgement,
-                override = excluded.override
+                override = excluded.override,
+                capabilities = excluded.capabilities
             """,
             {
                 "id": decision.id,
@@ -36,6 +38,7 @@ class SqliteDecisionRepository:
                     decision.requires_explicit_acknowledgement
                 ),
                 "override": int(decision.override),
+                "capabilities": json.dumps(decision.capabilities),
             },
         )
         self._conn.commit()
@@ -56,4 +59,5 @@ class SqliteDecisionRepository:
                 row["requires_explicit_acknowledgement"]
             ),
             override=bool(row["override"]),
+            capabilities=json.loads(row["capabilities"]),
         )

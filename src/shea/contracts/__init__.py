@@ -14,6 +14,8 @@ from .models import (
     Request,
     RiskAssessment,
     Task,
+    ToolRequest,
+    ToolResponse,
 )
 
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "Request",
     "RiskAssessment",
     "Task",
+    "ToolRequest",
+    "ToolResponse",
 ]

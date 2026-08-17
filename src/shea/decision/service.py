@@ -155,6 +155,7 @@ class DecisionService:
             risk=risk_result.level,
             requires_authorization=requires_authorization,
             requires_explicit_acknowledgement=rule.requires_explicit_acknowledgement,
+            capabilities=sorted(capabilities),
         )
         self._decisions.save(decision)
         self._audit.record(

@@ -39,6 +39,12 @@ TRANSITIONS: dict[TaskState, dict[str, TaskState]] = {
     TaskState.RUNNING: {
         "execution_complete": TaskState.VERIFYING,
         "execution_failed": TaskState.FAILED,
+        # Research doc Section 12.13: UNKNOWN must stay distinct from
+        # FAILURE — a dropped connection after a side effect may have
+        # occurred is not the same fact as "the action definitely did not
+        # happen." UNKNOWN routes to BLOCKED (needs investigation before
+        # anyone decides to retry or cancel), never straight to FAILED.
+        "execution_unknown": TaskState.BLOCKED,
         "security_halt": TaskState.SECURITY_HALT,
         "cancel": TaskState.CANCELLED,
     },

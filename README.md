@@ -1,12 +1,15 @@
-# SHEA — Phase 1 + 2: Core Foundation + Decision/Policy/Risk
+# SHEA — Phase 1–3: Core Foundation, Decision/Policy/Risk, Tool Execution
 
-Phase 1 is the foundation layer of SHEA, per the Development Plan's
-Phase 1 milestone ("Core runtime, contracts, state machine, persistence
-and configuration"). Phase 2 adds the Decision/Policy/Risk engine — the
-first subsystem that actually decides whether a task is allowed to run.
-Together they still contain **no model or tool logic** — those subsystems
-plug into the ports and the `DecisionService.evaluate_and_authorize()`
-call site in later phases without requiring changes to this layer.
+Phase 1 is the foundation layer (state machine, persistence, contracts,
+config). Phase 2 adds the Decision/Policy/Risk engine — the only
+subsystem allowed to move a task into `RUNNING`. Phase 3 adds the Tool
+Registry and Executor — the first subsystem that does something once a
+task is `RUNNING`, and the first to give `capabilities` a real backing
+instead of being opaque strings passed around by hand.
+
+Still no model/LLM integration and no Intent/Planning subsystem — those
+plug into the ports and the `DecisionService`/`ExecutionService` call
+sites in later phases without requiring changes to this layer.
 
 ## What's here
 
@@ -19,6 +22,8 @@ call site in later phases without requiring changes to this layer.
 | `shea.config`             | The six-layer configuration resolver (System → Machine → User → Profile → Project → Session), with `security_invariant_keys` that can only ever be set at the System layer regardless of what any other layer says.                                                             |
 | `shea.core`               | The `Orchestrator` — thin coordination of task lifecycle. Creates tasks, advances them via the state machine, persists, and audits every attempt (success _and_ rejection).                                                                                                     |
 | `shea.decision`           | `PolicyEngine` (deterministic capability rules), `RiskEngine` (factor-based classification + explanation), confirmation-tier rules, and `DecisionService` — the only subsystem allowed to call `Orchestrator.advance(task_id, "authorize_and_run")`.                            |
+| `shea.tools`              | `ToolDeclaration` + `ToolRegistry` (capability profiles, no authorization logic) and `ToolExecutor` (the capability gate — checks required vs. authorized capabilities _before_ the handler is ever looked up, and distinguishes SUCCESS/FAILURE/UNKNOWN outcomes).             |
+| `shea.execution`          | `ExecutionService` — looks up a task's authorized capabilities from the persisted `Decision` (never from a caller-supplied value), runs one tool call through `ToolExecutor`, and advances the orchestrator based on the outcome.                                               |
 | `shea.audit`              | `AuditRecorder` — centralizes event ID / timestamp generation so no call site can emit a malformed audit event.                                                                                                                                                                 |
 | `shea.adapters`           | Production implementations of `Clock` and `IdGenerator` (real time, real UUIDs). Tests use fakes instead — see `tests/conftest.py`.                                                                                                                                             |
 
@@ -45,14 +50,28 @@ distinct tiers on the way there —
 Both paths, and every risk assessment, are persisted and audited before
 the orchestrator is ever touched.
 
+Phase 3's `ExecutionService` (`shea/execution/service.py`) is the next
+link: it looks up a task's authorized capabilities from the persisted
+`Decision` — not from whatever an execution caller happens to claim — and
+`ToolExecutor` (`shea/tools/executor.py`) checks a tool's declared
+capabilities against that set _before_ even looking up the handler
+function. There is no code path in `ToolExecutor.execute()` that reaches
+a handler once the capability check fails. Execution outcomes are kept
+to exactly three, never conflated: `SUCCESS`, `FAILURE`, and `UNKNOWN`
+(the last for cases like a dropped connection after a side effect may
+have occurred — routed to `BLOCKED`, not `FAILED`, since it isn't safe to
+assume either way).
+
 ## What's deliberately NOT here yet
 
 - Any model/LLM integration
 - Intent Understanding & Planning (the Decision engine assumes a task is
   already `READY`, i.e. planning already happened)
-- Tool registry or execution — `capabilities` are opaque strings for now,
-  not backed by real declared tools
-- Security enforcement, sandboxing
+- Sandboxing, resource limits, filesystem/network scoping (Security &
+  Trust phase — `ExecutionService` is the orchestration layer around that
+  boundary, not the boundary itself)
+- Multi-step plan execution (`ExecutionService` runs one tool call per
+  invocation; looping over `PlanStep`s is Planning/Orchestration's job)
 - Audio/voice pipeline
 - Provider routing
 

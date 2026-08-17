@@ -89,6 +89,11 @@ class Decision:
     actually happened is recorded separately in an Authorization record,
     so a Decision can never retroactively claim an authorization it didn't
     receive.
+
+    `capabilities` records exactly which capabilities this decision was
+    evaluated and authorized for, so the Execution subsystem can look up
+    "what was actually authorized for this task" from persisted state
+    rather than trusting a value an execution caller happens to pass in.
     """
 
     id: str
@@ -98,6 +103,7 @@ class Decision:
     requires_authorization: bool
     requires_explicit_acknowledgement: bool = False
     override: bool = False
+    capabilities: list[str] = field(default_factory=list[str])
 
 
 @dataclass
@@ -142,3 +148,28 @@ class Task:
     created_at: datetime
     updated_at: datetime
     plan_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolRequest:
+    """Technical doc Section 8.4 — every tool invocation follows this
+    uniform shape, regardless of which tool is called.
+    """
+
+    request_id: str
+    tool: str
+    action: str
+    arguments: dict[str, Any] = field(default_factory=dict[str, Any])
+    context: dict[str, Any] = field(default_factory=dict[str, Any])
+
+
+@dataclass(frozen=True)
+class ToolResponse:
+    """Technical doc Section 8.4 — "Tools return structured errors rather
+    than unstructured failures."
+    """
+
+    success: bool
+    data: Any = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
