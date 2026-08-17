@@ -1,6 +1,6 @@
 # SHEA — Todo
 
-## Phase 1: Core Foundation (this session)
+## Phase 1: Core Foundation
 
 - [x] Directory scaffold (`src/shea/...`, `tests/...`)
 - [x] Contracts: enums (`TaskState`, `RiskLevel`, `ExecutionOutcome`) + dataclasses
@@ -47,7 +47,7 @@
 - [ ] Full testing pyramid (integration, E2E, security, chaos) — only unit +
       property exist so far
 
-## Review
+## Phase 1 Review
 
 **Verified 2026-08-16:**
 
