@@ -18,6 +18,16 @@ DEFAULT_AUTHORIZATION_REQUIRED_CAPABILITIES: frozenset[str] = frozenset(
         "network.listen",
         "system.configure",
         "credential.access",
+        "credential.modify",
+        "data.modify",
+        "data.exfiltrate",
+        "data.delete",
+        "data.encrypt",
+        "data.decrypt",
+        "data.sign",
+        "certificate.sign",
+        "certificate.install",
+        "certificate.modify",
     }
 )
 
