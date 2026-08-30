@@ -31,6 +31,7 @@ class Intent:
     """Technical doc Section 8.2."""
 
     id: str
+    task_id: str
     type: str
     goal: str
     parameters: dict[str, Any] = field(default_factory=dict[str, Any])
