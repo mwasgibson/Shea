@@ -4,7 +4,7 @@ from .service import (
     VerificationResult,
     VerificationService,
 )
-from .verifier import Verifier, VerificationOutcome, VerifierRegistry, default_verifier
+from .verifier import VerificationOutcome, Verifier, VerifierRegistry, default_verifier
 
 __all__ = [
     "MissingExecutionRecordError",

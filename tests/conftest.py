@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import pytest
 
 from shea.audit.recorder import AuditRecorder
 from shea.config.resolver import ConfigResolver
-from shea.contracts.models import Task
+from shea.contracts.models import Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
@@ -20,12 +21,18 @@ from shea.persistence.sqlite.connection import open_connection
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.migrator import run_migrations
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
+from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAttemptRepository
 from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentRepository
 from shea.persistence.sqlite.task_repository import SqliteTaskRepository
+from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
+from shea.persistence.sqlite.verification_repository import SqliteVerificationRepository
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
+from shea.recovery.service import RecoveryService
 from shea.tools.executor import ToolExecutor
-from shea.tools.registry import ToolRegistry
+from shea.tools.registry import ToolDeclaration, ToolRegistry
+from shea.verification.service import VerificationService
+from shea.verification.verifier import VerifierRegistry
 
 
 class FrozenClock(Clock):
@@ -63,7 +70,7 @@ def db_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def conn(db_path: Path) -> sqlite3.Connection:
+def conn(db_path: Path) -> Iterator[sqlite3.Connection]:
     connection = open_connection(db_path)
     run_migrations(connection)
     yield connection
@@ -195,17 +202,26 @@ def tool_executor(tool_registry: ToolRegistry) -> ToolExecutor:
 
 
 @pytest.fixture
+def tool_execution_repository(conn: sqlite3.Connection) -> SqliteToolExecutionRepository:
+    return SqliteToolExecutionRepository(conn)
+
+
+@pytest.fixture
 def execution_service(
     tool_executor: ToolExecutor,
     orchestrator: Orchestrator,
     decision_repository: SqliteDecisionRepository,
+    tool_execution_repository: SqliteToolExecutionRepository,
     audit_recorder: AuditRecorder,
+    id_generator: SequentialIdGenerator,
 ) -> ExecutionService:
     return ExecutionService(
         tool_executor=tool_executor,
         orchestrator=orchestrator,
         decision_repository=decision_repository,
+        tool_execution_repository=tool_execution_repository,
         audit=audit_recorder,
+        id_generator=id_generator,
     )
 
 
@@ -222,3 +238,92 @@ def running_task(decision_service: DecisionService, ready_task: Task) -> Task:
         ready_task, capabilities=frozenset({"weather.lookup"})
     )
     return outcome.task
+
+
+@pytest.fixture
+def verification_repository(conn: sqlite3.Connection) -> SqliteVerificationRepository:
+    return SqliteVerificationRepository(conn)
+
+
+@pytest.fixture
+def verifier_registry() -> VerifierRegistry:
+    return VerifierRegistry()
+
+
+@pytest.fixture
+def verification_service(
+    verifier_registry: VerifierRegistry,
+    orchestrator: Orchestrator,
+    tool_execution_repository: SqliteToolExecutionRepository,
+    verification_repository: SqliteVerificationRepository,
+    audit_recorder: AuditRecorder,
+    clock: FrozenClock,
+    id_generator: SequentialIdGenerator,
+) -> VerificationService:
+    return VerificationService(
+        verifier_registry=verifier_registry,
+        orchestrator=orchestrator,
+        tool_execution_repository=tool_execution_repository,
+        verification_repository=verification_repository,
+        audit=audit_recorder,
+        clock=clock,
+        id_generator=id_generator,
+    )
+
+
+@pytest.fixture
+def recovery_attempt_repository(conn: sqlite3.Connection) -> SqliteRecoveryAttemptRepository:
+    return SqliteRecoveryAttemptRepository(conn)
+
+
+@pytest.fixture
+def recovery_service(
+    orchestrator: Orchestrator,
+    recovery_attempt_repository: SqliteRecoveryAttemptRepository,
+    audit_recorder: AuditRecorder,
+    id_generator: SequentialIdGenerator,
+) -> RecoveryService:
+    return RecoveryService(
+        orchestrator=orchestrator,
+        recovery_attempt_repository=recovery_attempt_repository,
+        audit=audit_recorder,
+        id_generator=id_generator,
+    )
+
+
+@pytest.fixture
+def verifying_task(
+    execution_service: ExecutionService, running_task: Task, tool_registry: ToolRegistry
+) -> Task:
+    """A task carried through to VERIFYING via a real, successful
+    execution — the state VerificationService expects to receive one in.
+    """
+
+    def handler(request: ToolRequest) -> ToolResponse:
+        return ToolResponse(success=True, data={"result": "ok"})
+
+    tool_registry.register(
+        ToolDeclaration(name="echo", capabilities=frozenset({"weather.lookup"})), handler
+    )
+    request = ToolRequest(request_id="req-1", tool="echo", action="lookup")
+    result = execution_service.execute(running_task, request)
+    return result.task
+
+
+@pytest.fixture
+def failed_task(
+    execution_service: ExecutionService, running_task: Task, tool_registry: ToolRegistry
+) -> Task:
+    """A task carried through to FAILED via a real, failing execution —
+    the state RecoveryService.begin_recovery expects to receive one in.
+    """
+
+    def handler(request: ToolRequest) -> ToolResponse:
+        return ToolResponse(success=False, error="deliberate failure")
+
+    tool_registry.register(
+        ToolDeclaration(name="fail", capabilities=frozenset({"weather.lookup"})), handler
+    )
+    request = ToolRequest(request_id="req-1", tool="fail", action="do_thing")
+    result = execution_service.execute(running_task, request)
+    return result.task

@@ -34,6 +34,50 @@
       one of exactly three values; disjoint capabilities always allowed
 - [x] Full suite verified: 68/68 pytest, mypy --strict clean, ruff clean (fresh extraction)
 
+## Phase 3: Tool Registry + Executor
+
+- [x] Contracts: `ToolRequest`/`ToolResponse` (Section 8.4); `Decision.capabilities`
+      field so authorized capabilities are persisted, not just passed around at
+      runtime
+- [x] State machine: added `execution_unknown` event (`RUNNING` -> `BLOCKED`) so
+      UNKNOWN outcomes never collapse into `FAILED`
+- [x] `ToolDeclaration` + `ToolRegistry` — capability profile + lookup, no
+      authorization logic of its own
+- [x] `ToolExecutor` — capability gate BEFORE handler lookup; distinguishes
+      SUCCESS / FAILURE / UNKNOWN (`UnknownOutcomeError` for the latter)
+- [x] `ExecutionService` — looks up authorized capabilities from the persisted
+      Decision (not a caller-supplied value); advances the orchestrator based on
+      outcome; audits every attempt including capability denials
+- [x] SQLite migration 0003 (decisions.capabilities column) + repository update
+- [x] Unit tests: registry (6), executor (6), execution service (8)
+- [x] Property test: handler fires iff required capabilities ⊆ authorized
+      capabilities, across randomized capability set combinations
+- [x] Full suite verified: 89/89 pytest, mypy --strict clean, ruff clean
+
+## Phase 4: Verification & Recovery
+
+- [x] Contracts: `ToolExecutionRecord`, `VerificationRecord`, `RecoveryAttempt`
+- [x] Ports: `ToolExecutionRepository`, `VerificationRepository`, `RecoveryAttemptRepository`
+- [x] `ExecutionService` updated to persist a `ToolExecutionRecord` for every
+      attempt (including capability denials), giving Verification something
+      structured to read
+- [x] `Verifier` abstraction + `VerifierRegistry` (per-tool, mirrors `ToolRegistry`'s
+      shape) + documented `default_verifier` fallback
+- [x] `VerificationService` — the only caller of `Orchestrator.advance(task_id,
+      "verified" | "verification_failed")`
+- [x] `Compensator` abstraction + honest `default_compensator` (always reports
+      `restored=False` — never optimistic)
+- [x] `RecoveryService` — bounded Saga-style retry loop (`FAILED -> RECOVERING ->
+      READY | FAILED`) counted from persisted attempts, not an in-memory counter;
+      plus `resolve_blocked()` for the `BLOCKED` state Phase 3 introduced but never
+      resolved
+- [x] SQLite migration 0004 (tool_executions / verifications / recovery_attempts)
+      + three new repositories
+- [x] Unit tests: verifier (4), verification service (6), recovery service (11)
+- [x] Property tests: default verifier only ever verifies genuine SUCCESS+success
+      across randomized inputs; default compensator never reports restored
+- [x] Full suite verified: 112/112 pytest, mypy --strict clean, ruff clean
+
 ## Explicitly deferred to later phases (not started)
 
 - [ ] Intent Understanding & Planning (LLM-in-the-loop, constrained output)
@@ -106,7 +150,7 @@ contracts and calls `Orchestrator.advance()` with `authorize_and_run`.
 
 - A `PolicyDeniedError` cannot be bypassed by `explicit_user_ack=True` —
   proven directly, not just documented (`test_policy_denied_capability_
-blocks_even_with_explicit_ack`).
+  blocks_even_with_explicit_ack`).
 - A HIGH-risk action IS unblockable by an explicit acknowledgement —
   `WARNING != DENIAL` (Appendix B), proven as the mirror image of the
   above rather than asserted in a comment.
@@ -141,26 +185,6 @@ required capabilities per technical doc Section 10.4's `Tool` contract —
 and the first subsystem that does something once `RUNNING` is reached.
 
 ---
-
-## Phase 3: Tool Registry + Executor
-
-- [x] Contracts: `ToolRequest`/`ToolResponse` (Section 8.4); `Decision.capabilities`
-      field so authorized capabilities are persisted, not just passed around at
-      runtime
-- [x] State machine: added `execution_unknown` event (`RUNNING` -> `BLOCKED`) so
-      UNKNOWN outcomes never collapse into `FAILED`
-- [x] `ToolDeclaration` + `ToolRegistry` — capability profile + lookup, no
-      authorization logic of its own
-- [x] `ToolExecutor` — capability gate BEFORE handler lookup; distinguishes
-      SUCCESS / FAILURE / UNKNOWN (`UnknownOutcomeError` for the latter)
-- [x] `ExecutionService` — looks up authorized capabilities from the persisted
-      Decision (not a caller-supplied value); advances the orchestrator based on
-      outcome; audits every attempt including capability denials
-- [x] SQLite migration 0003 (decisions.capabilities column) + repository update
-- [x] Unit tests: registry (6), executor (6), execution service (8)
-- [x] Property test: handler fires iff required capabilities ⊆ authorized
-      capabilities, across randomized capability set combinations
-- [x] Full suite verified: 89/89 pytest, mypy --strict clean, ruff clean
 
 ### Phase 3 Review
 
@@ -207,3 +231,55 @@ piece before there's a real LLM in the loop — or, if you'd rather harden
 what exists first, Verification & Recovery (the `VERIFYING -> COMPLETED`
 half of the state machine, currently unimplemented) is a smaller, more
 self-contained slice.
+
+---
+
+### Phase 4 Review
+
+**Verified 2026-08-17 (fresh venv + fresh extraction):**
+
+- `pytest`: 112/112 passed (89 from Phase 1-3, 23 new)
+- `mypy --strict`: clean across all 49 source files
+- `ruff check .`: clean
+
+**What the tests actually prove:**
+
+- `test_custom_verifier_can_override_execution_report` — a tool reporting
+  `success=True` does NOT force the task to `COMPLETED`. A registered
+  Verifier can independently disagree, and the task ends up `FAILED`.
+  This is `EXECUTION SUCCESS != VERIFIED SUCCESS` (Appendix B) proven as
+  behavior, not asserted in a docstring.
+- `test_resolve_recovery_with_default_compensator_never_claims_success` —
+  with no real compensating action configured, recovery resolves to
+  `FAILED`, not `READY`. The property test
+  `test_default_compensator_never_reports_restored` extends this across
+  arbitrary task IDs: the default never once returns `restored=True`.
+- `test_recovery_attempts_are_bounded` — drives three full recovery
+  cycles and confirms a fourth `begin_recovery()` call raises
+  `RecoveryExhaustedError`, with the task provably still `FAILED`
+  afterward (exhaustion doesn't silently move it anywhere).
+- The `UNKNOWN`-outcome property test from Phase 3
+  (`test_unknown_outcome_advances_task_to_blocked_not_failed`) now has a
+  real way out: `resolve_blocked()`, tested both for resuming
+  (`-> READY`) and cancelling (`-> CANCELLED`).
+
+**Known simplifications, intentional for Phase 4:**
+
+- `default_verifier` trusts a tool's own success report when no
+  tool-specific `Verifier` is registered — documented as a known
+  limitation in its own docstring, not a silent gap. Real verification
+  (e.g. re-reading a file a tool claims to have written) requires
+  tool-specific knowledge that belongs with each tool's own registration,
+  not a generic engine.
+- `RecoveryService.begin_recovery()` does not itself decide *why* a task
+  failed or whether retrying is sensible — that judgment belongs to
+  whatever calls it (eventually the Orchestrator/Planning layer). Phase 4
+  provides the bounded mechanism, not the retry policy.
+- One verification record and unlimited tool-execution records per task
+  (both listed, not upserted) — matches the append-only pattern used for
+  `Authorization` since Phase 2.
+
+**Next natural step:** Intent Understanding & Planning — the last major
+piece before a real LLM enters the loop, and the first subsystem that
+actually produces a `Plan` (currently just typed shape) for `DecisionService`
+to evaluate, rather than tests driving the state machine by hand.

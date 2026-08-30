@@ -14,6 +14,8 @@ from shea.execution.service import (
     TaskNotRunningError,
 )
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
+from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
+from shea.ports.id_generator import IdGenerator
 from shea.tools.executor import ToolExecutor, UnknownOutcomeError
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 
@@ -120,7 +122,9 @@ def test_execution_without_decision_raises(
     tool_executor: ToolExecutor,
     orchestrator: Orchestrator,
     decision_repository: SqliteDecisionRepository,
+    tool_execution_repository: SqliteToolExecutionRepository,
     audit_recorder: AuditRecorder,
+    id_generator: IdGenerator,
     tool_registry: ToolRegistry,
 ) -> None:
     """Structurally, only DecisionService can move a task to RUNNING, and
@@ -138,7 +142,9 @@ def test_execution_without_decision_raises(
         tool_executor=tool_executor,
         orchestrator=orchestrator,
         decision_repository=decision_repository,
+        tool_execution_repository=tool_execution_repository,
         audit=audit_recorder,
+        id_generator=id_generator,
     )
     register_echo(tool_registry)
     request = ToolRequest(request_id="req-1", tool="echo", action="do_thing")

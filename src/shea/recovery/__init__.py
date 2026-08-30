@@ -1,4 +1,4 @@
-from .compensator import Compensator, CompensationOutcome, default_compensator
+from .compensator import CompensationOutcome, Compensator, default_compensator
 from .service import (
     DEFAULT_MAX_ATTEMPTS,
     MissingRecoveryAttemptError,

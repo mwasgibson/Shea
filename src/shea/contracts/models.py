@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .enums import RiskLevel, TaskState, ExecutionOutcome
+from .enums import ExecutionOutcome, RiskLevel, TaskState
 
 # NOTE on scope: several of these contracts (Intent, Plan, Decision,
 # RiskAssessment, Authorization) describe the *shape* that later phases
