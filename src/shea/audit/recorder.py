@@ -5,6 +5,7 @@ from typing import Any
 from shea.contracts.models import AuditEvent
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
+from shea.ports.redactor import Redactor
 from shea.ports.repositories import AuditSink
 
 
@@ -16,12 +17,27 @@ class AuditRecorder:
     Built now, in Phase 1, before there's anything risky to audit yet, so
     later subsystems (Decision, Execution, Security) inherit a working
     audit path instead of bolting one on after the fact.
+
+    `redactor` is optional and defaults to None (pass-through) so every
+    existing call site keeps working unchanged. Wiring in a real
+    `Redactor` (e.g. shea.security.secrets.SecretRedactor) is the
+    concrete enforcement of technical doc Section 10.5: secrets must be
+    "excluded from normal audit logs" and "redacted from errors and
+    telemetry" — applied here, once, rather than requiring every call
+    site to remember to redact its own metadata.
     """
 
-    def __init__(self, sink: AuditSink, clock: Clock, id_generator: IdGenerator) -> None:
+    def __init__(
+        self,
+        sink: AuditSink,
+        clock: Clock,
+        id_generator: IdGenerator,
+        redactor: Redactor | None = None,
+    ) -> None:
         self._sink = sink
         self._clock = clock
         self._id_generator = id_generator
+        self._redactor = redactor
 
     def record(
         self,
@@ -35,6 +51,10 @@ class AuditRecorder:
         task_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AuditEvent:
+        safe_metadata = metadata or {}
+        if self._redactor is not None:
+            safe_metadata = self._redactor.redact_mapping(safe_metadata)
+
         event = AuditEvent(
             event_id=self._id_generator.new_id(),
             request_id=request_id,
@@ -45,7 +65,7 @@ class AuditRecorder:
             event_type=event_type,
             action=action,
             result=result,
-            metadata=metadata or {},
+            metadata=safe_metadata,
         )
         self._sink.record(event)
         return event

@@ -33,6 +33,11 @@ from shea.planning.templates import PlanTemplateRegistry
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.recovery.service import RecoveryService
+from shea.security.filesystem_policy import FilesystemPolicy
+from shea.security.gate import SecurityGate
+from shea.security.injection import PromptInjectionDetector
+from shea.security.network_policy import NetworkPolicy
+from shea.security.service import SecurityService
 from shea.tools.executor import ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 from shea.understanding.deterministic import DeterministicIntentMatcher
@@ -376,4 +381,41 @@ def planning_service(
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+    )
+
+
+@pytest.fixture
+def network_policy() -> NetworkPolicy:
+    return NetworkPolicy()
+
+
+@pytest.fixture
+def filesystem_policy() -> FilesystemPolicy:
+    return FilesystemPolicy(allowed_roots=frozenset({"/home/shea/workspace"}))
+
+
+@pytest.fixture
+def security_gate(
+    network_policy: NetworkPolicy, filesystem_policy: FilesystemPolicy
+) -> SecurityGate:
+    return SecurityGate(network_policy=network_policy, filesystem_policy=filesystem_policy)
+
+
+@pytest.fixture
+def injection_detector() -> PromptInjectionDetector:
+    return PromptInjectionDetector()
+
+
+@pytest.fixture
+def security_service(
+    security_gate: SecurityGate,
+    injection_detector: PromptInjectionDetector,
+    orchestrator: Orchestrator,
+    audit_recorder: AuditRecorder,
+) -> SecurityService:
+    return SecurityService(
+        gate=security_gate,
+        injection_detector=injection_detector,
+        orchestrator=orchestrator,
+        audit=audit_recorder,
     )
