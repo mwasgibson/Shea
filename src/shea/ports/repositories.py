@@ -6,6 +6,7 @@ from shea.contracts.models import (
     AuditEvent,
     Authorization,
     Decision,
+    Intent,
     Plan,
     RecoveryAttempt,
     RiskAssessment,
@@ -34,6 +35,14 @@ class PlanRepository(Protocol):
     def save(self, plan: Plan) -> None: ...
 
     def get_by_task(self, task_id: str) -> Plan | None: ...
+
+
+class IntentRepository(Protocol):
+    """Persists Intent records — technical doc Section 8.2."""
+
+    def save(self, intent: Intent) -> None: ...
+
+    def get_by_task(self, task_id: str) -> Intent | None: ...
 
 
 class RiskAssessmentRepository(Protocol):

@@ -15,10 +15,12 @@ from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
 from shea.execution.service import ExecutionService
+from shea.model.scripted import ScriptedModelProvider
 from shea.persistence.sqlite.audit_sink import SqliteAuditSink
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.connection import open_connection
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
+from shea.persistence.sqlite.intent_repository import SqliteIntentRepository
 from shea.persistence.sqlite.migrator import run_migrations
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
 from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAttemptRepository
@@ -26,11 +28,14 @@ from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentReposito
 from shea.persistence.sqlite.task_repository import SqliteTaskRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.persistence.sqlite.verification_repository import SqliteVerificationRepository
+from shea.planning.service import PlanningService
+from shea.planning.templates import PlanTemplateRegistry
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.recovery.service import RecoveryService
 from shea.tools.executor import ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry
+from shea.understanding.deterministic import DeterministicIntentMatcher
 from shea.verification.service import VerificationService
 from shea.verification.verifier import VerifierRegistry
 
@@ -327,3 +332,48 @@ def failed_task(
     request = ToolRequest(request_id="req-1", tool="fail", action="do_thing")
     result = execution_service.execute(running_task, request)
     return result.task
+
+
+@pytest.fixture
+def intent_repository(conn: sqlite3.Connection) -> SqliteIntentRepository:
+    return SqliteIntentRepository(conn)
+
+
+@pytest.fixture
+def deterministic_matcher() -> DeterministicIntentMatcher:
+    return DeterministicIntentMatcher()
+
+
+@pytest.fixture
+def template_registry() -> PlanTemplateRegistry:
+    return PlanTemplateRegistry()
+
+
+@pytest.fixture
+def scripted_model_provider() -> ScriptedModelProvider:
+    return ScriptedModelProvider()
+
+
+@pytest.fixture
+def planning_service(
+    orchestrator: Orchestrator,
+    deterministic_matcher: DeterministicIntentMatcher,
+    template_registry: PlanTemplateRegistry,
+    tool_registry: ToolRegistry,
+    intent_repository: SqliteIntentRepository,
+    plan_repository: SqlitePlanRepository,
+    audit_recorder: AuditRecorder,
+    clock: FrozenClock,
+    id_generator: SequentialIdGenerator,
+) -> PlanningService:
+    return PlanningService(
+        orchestrator=orchestrator,
+        deterministic_matcher=deterministic_matcher,
+        template_registry=template_registry,
+        tool_registry=tool_registry,
+        intent_repository=intent_repository,
+        plan_repository=plan_repository,
+        audit=audit_recorder,
+        clock=clock,
+        id_generator=id_generator,
+    )

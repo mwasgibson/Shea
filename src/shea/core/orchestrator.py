@@ -109,3 +109,25 @@ class Orchestrator:
             metadata={"from_state": from_state.value, "to_state": new_state.value},
         )
         return task
+
+    def attach_plan(self, task_id: str, plan_id: str) -> Task:
+        """Records which Plan a task is executing, without touching its
+        state. Kept on Orchestrator rather than letting PlanningService
+        write directly to TaskRepository, so Task mutation stays
+        centralized in one place — the same reason `advance()` is the
+        only method that changes `state`.
+        """
+        task = self.get_task(task_id)
+        task.plan_id = plan_id
+        self._tasks.save(task)
+        self._audit.record(
+            actor="orchestrator",
+            component="core.orchestrator",
+            event_type="task.plan_attached",
+            action="attach_plan",
+            result="success",
+            request_id=task.request_id,
+            task_id=task.id,
+            metadata={"plan_id": plan_id},
+        )
+        return task

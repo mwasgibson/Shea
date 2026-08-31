@@ -176,6 +176,21 @@ class ToolResponse:
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
+@dataclass(frozen=True)
+class ModelResponse:
+    """Technical doc Section 8.5's ModelProvider contract — the return
+    shape of `generate()`. `structured_data` is populated when the
+    provider was asked for (and produced) structured output; callers that
+    need JSON must check for None rather than assuming it's always
+    present, since a real model can always return prose instead.
+    """
+
+    content: str
+    structured_data: dict[str, Any] | None = None
+    finish_reason: str = "stop"
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+
+
 @dataclass
 class ToolExecutionRecord:
     """Persisted record of one tool invocation — technical doc Section
