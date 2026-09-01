@@ -4,6 +4,7 @@ import pytest
 
 from shea.contracts.enums import ExecutionOutcome
 from shea.contracts.models import ToolRequest, ToolResponse
+from shea.ports.execution_boundary import BoundaryHandler, ExecutionScope
 from shea.tools.executor import (
     CapabilityNotAuthorizedError,
     ToolExecutor,
@@ -138,3 +139,36 @@ def test_unknown_outcome_error_is_unknown_not_failure() -> None:
 
     assert result.outcome == ExecutionOutcome.UNKNOWN
     assert result.outcome != ExecutionOutcome.FAILURE
+
+
+def test_injected_boundary_is_used_and_handler_is_called_exactly_once() -> None:
+    """The regression this guards against: an earlier version of
+    ToolExecutor discarded a configured boundary's result and called the
+    raw handler again unconditionally — invoking it twice and bypassing
+    the boundary entirely. This proves both are fixed: the boundary's
+    `run()` is what's called, and the underlying handler fires exactly
+    once no matter how many layers wrap it.
+    """
+    handler_calls: list[ToolRequest] = []
+    boundary_calls: list[ToolRequest] = []
+
+    def handler(request: ToolRequest) -> ToolResponse:
+        handler_calls.append(request)
+        return ToolResponse(success=True, data="from-handler")
+
+    class RecordingBoundary:
+        def run(
+            self, request: ToolRequest, handler: BoundaryHandler, scope: ExecutionScope
+        ) -> ToolResponse:
+            boundary_calls.append(request)
+            return handler(request)
+
+    registry = ToolRegistry()
+    registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
+    executor = ToolExecutor(registry, boundary=RecordingBoundary())
+
+    result = executor.execute(make_request(), authorized_capabilities=frozenset())
+
+    assert len(boundary_calls) == 1
+    assert len(handler_calls) == 1
+    assert result.response.data == "from-handler"

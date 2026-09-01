@@ -3,6 +3,7 @@ from .filesystem_policy import FilesystemPolicy, is_path_allowed
 from .gate import SecurityGate
 from .injection import DEFAULT_INJECTION_PHRASES, InjectionScanResult, PromptInjectionDetector
 from .network_policy import DEFAULT_BLOCKED_HOSTNAMES, NetworkPolicy, is_url_allowed
+from .sandbox import SandboxedExecutionBoundary
 from .secrets import DEFAULT_SECRET_PATTERNS, REDACTED, SecretRedactor
 from .service import SecurityService, TaskNotRunningForSecurityCheckError
 
@@ -17,6 +18,7 @@ __all__ = [
     "DEFAULT_BLOCKED_HOSTNAMES",
     "NetworkPolicy",
     "is_url_allowed",
+    "SandboxedExecutionBoundary",
     "DEFAULT_SECRET_PATTERNS",
     "REDACTED",
     "SecretRedactor",

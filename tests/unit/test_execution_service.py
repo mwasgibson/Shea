@@ -16,6 +16,8 @@ from shea.execution.service import (
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.ports.id_generator import IdGenerator
+from shea.security.exceptions import SecurityViolationError
+from shea.security.service import SecurityService
 from shea.tools.executor import ToolExecutor, UnknownOutcomeError
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 
@@ -194,3 +196,40 @@ def test_capability_denial_is_audited(
     ).fetchall()
     assert len(rows) == 1
     assert rows[0]["result"] == "denied"
+
+
+def test_execution_service_with_security_service_halts_on_violation(
+    tool_executor: ToolExecutor,
+    orchestrator: Orchestrator,
+    decision_repository: SqliteDecisionRepository,
+    tool_execution_repository: SqliteToolExecutionRepository,
+    audit_recorder: AuditRecorder,
+    id_generator: IdGenerator,
+    running_task: Task,
+    security_service: SecurityService,
+) -> None:
+    """Proves ExecutionService actually calls SecurityService when one is
+    configured, rather than requiring a separate call the caller might
+    forget — the fix for the original "isn't integrated to anything" gap.
+    """
+    service = ExecutionService(
+        tool_executor=tool_executor,
+        orchestrator=orchestrator,
+        decision_repository=decision_repository,
+        tool_execution_repository=tool_execution_repository,
+        audit=audit_recorder,
+        id_generator=id_generator,
+        security_service=security_service,
+    )
+    request = ToolRequest(
+        request_id="req-1",
+        tool="fetch",
+        action="get",
+        arguments={"url": "http://169.254.169.254/latest/meta-data/"},
+    )
+
+    with pytest.raises(SecurityViolationError):
+        service.execute(running_task, request)
+
+    halted = orchestrator.get_task(running_task.id)
+    assert halted.state == TaskState.SECURITY_HALT

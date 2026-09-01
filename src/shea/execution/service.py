@@ -8,6 +8,7 @@ from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolRe
 from shea.core.orchestrator import Orchestrator
 from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import DecisionRepository, ToolExecutionRepository
+from shea.security.service import SecurityService
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 
 _ADVANCE_EVENT_BY_OUTCOME: dict[ExecutionOutcome, str] = {
@@ -55,11 +56,21 @@ class ExecutionOutcomeRecord:
 
 class ExecutionService:
     """Technical doc Component: Execution Runtime, restricted to the
-    "run one already-authorized tool call and advance the task
-    accordingly" slice of that responsibility. Sandboxing, resource
-    limits, and network/filesystem scoping (research doc Section 10) are
-    NOT implemented here — this is the orchestration layer around them,
-    not the isolation boundary itself.
+    "run one already-authorized, security-cleared tool call and advance
+    the task accordingly" slice of that responsibility. The actual
+    sandboxing mechanics (timeout, redaction) live in whatever
+    ExecutionBoundary the injected ToolExecutor uses — this service does
+    not implement isolation itself, it sequences the pipeline stages
+    around it.
+
+    When constructed with a `security_service`, `execute()` calls
+    `SecurityService.enforce()` before doing anything else — making
+    security enforcement a structural part of every execution rather than
+    a separate step a caller might forget to invoke in the right order.
+    `security_service` is optional (defaults to None, skipping the check)
+    so existing callers and tests that construct ExecutionService without
+    one keep working unchanged; production wiring should always supply
+    one.
 
     Looks up the task's authorized capabilities from the persisted
     Decision (never from a caller-supplied value), so a capability check
@@ -76,6 +87,7 @@ class ExecutionService:
         tool_execution_repository: ToolExecutionRepository,
         audit: AuditRecorder,
         id_generator: IdGenerator,
+        security_service: SecurityService | None = None,
     ) -> None:
         self._tool_executor = tool_executor
         self._orchestrator = orchestrator
@@ -83,10 +95,17 @@ class ExecutionService:
         self._tool_executions = tool_execution_repository
         self._audit = audit
         self._ids = id_generator
+        self._security = security_service
 
     def execute(self, task: Task, request: ToolRequest) -> ExecutionOutcomeRecord:
         if task.state is not TaskState.RUNNING:
             raise TaskNotRunningError(task.id, task.state)
+
+        if self._security is not None:
+            # Raises SecurityViolationError and drives the task to
+            # SECURITY_HALT itself on a violation; nothing further to do
+            # here on that path except let the exception propagate.
+            self._security.enforce(task, request)
 
         decision = self._decisions.get_by_task(task.id)
         if decision is None:

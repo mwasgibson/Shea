@@ -1,3 +1,4 @@
+from .boundary import UnsafeExecutionBoundary
 from .executor import (
     CapabilityNotAuthorizedError,
     ExecutionResult,
@@ -13,6 +14,7 @@ from .registry import (
 )
 
 __all__ = [
+    "UnsafeExecutionBoundary",
     "CapabilityNotAuthorizedError",
     "ExecutionResult",
     "ToolExecutor",

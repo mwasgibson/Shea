@@ -1,4 +1,5 @@
 from .clock import Clock
+from .execution_boundary import BoundaryHandler, ExecutionBoundary, ExecutionScope
 from .id_generator import IdGenerator
 from .model_provider import ModelProvider
 from .redactor import Redactor
@@ -17,6 +18,9 @@ from .repositories import (
 
 __all__ = [
     "Clock",
+    "BoundaryHandler",
+    "ExecutionBoundary",
+    "ExecutionScope",
     "IdGenerator",
     "ModelProvider",
     "Redactor",

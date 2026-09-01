@@ -14,10 +14,10 @@ class SqliteIntentRepository:
     def save(self, intent: Intent) -> None:
         self._conn.execute(
             """
-            INSERT INTO intents (
-                id, task_id, type, goal, parameters, confidence, source, created_at
-            )
-            VALUES (:id, :task_id, :type, :goal, :parameters, :confidence, :source, :created_at)
+            INSERT INTO intents
+                (id, task_id, type, goal, parameters, confidence, source, created_at)
+            VALUES
+                (:id, :task_id, :type, :goal, :parameters, :confidence, :source, :created_at)
             """,
             {
                 "id": intent.id,
@@ -33,7 +33,9 @@ class SqliteIntentRepository:
         self._conn.commit()
 
     def get_by_task(self, task_id: str) -> Intent | None:
-        row = self._conn.execute("SELECT * FROM intents WHERE task_id = ?", (task_id,)).fetchone()
+        row = self._conn.execute(
+            "SELECT * FROM intents WHERE task_id = ?", (task_id,)
+        ).fetchone()
         if row is None:
             return None
         return Intent(

@@ -4,7 +4,9 @@ from dataclasses import dataclass
 
 from shea.contracts.enums import ExecutionOutcome
 from shea.contracts.models import ToolRequest, ToolResponse
+from shea.ports.execution_boundary import ExecutionBoundary, ExecutionScope
 
+from .boundary import UnsafeExecutionBoundary
 from .registry import ToolRegistry
 
 
@@ -16,6 +18,10 @@ class UnknownOutcomeError(Exception):
     handlers must not raise it as a catch-all, only when they genuinely
     cannot distinguish success from failure. Any other exception a
     handler raises is treated as a definite FAILURE.
+
+    Boundary implementations (e.g. a timeout) should raise this too, for
+    the same reason: a timed-out call may have completed its side effect
+    before the timeout fired, so "timeout" is UNKNOWN, not FAILURE.
     """
 
 
@@ -47,13 +53,23 @@ class ToolExecutor:
     requests"), implementing the pipeline fragment from Section 5.1:
     Tool Layer -> Execution, with the capability check as a hard gate
     before the handler is ever reached.
+
+    Exactly one call site invokes a handler: `self._boundary.run(...)`.
+    There is no fallback path that calls the handler directly, so a
+    configured boundary can never be silently bypassed by a leftover
+    branch — the boundary defaults to UnsafeExecutionBoundary (no
+    isolation) rather than the executor sometimes skipping it.
     """
 
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(self, registry: ToolRegistry, boundary: ExecutionBoundary | None = None) -> None:
         self._registry = registry
+        self._boundary: ExecutionBoundary = boundary or UnsafeExecutionBoundary()
 
     def execute(
-        self, request: ToolRequest, authorized_capabilities: frozenset[str]
+        self,
+        request: ToolRequest,
+        authorized_capabilities: frozenset[str],
+        scope: ExecutionScope | None = None,
     ) -> ExecutionResult:
         declaration = self._registry.get_declaration(request.tool)
 
@@ -65,17 +81,19 @@ class ToolExecutor:
             raise CapabilityNotAuthorizedError(request.tool, missing)
 
         handler = self._registry.get_handler(request.tool)
+        effective_scope = scope or ExecutionScope()
 
         try:
-            response = handler(request)
+            response = self._boundary.run(request, handler, effective_scope)
         except UnknownOutcomeError as exc:
             return ExecutionResult(
                 response=ToolResponse(success=False, error=str(exc)),
                 outcome=ExecutionOutcome.UNKNOWN,
             )
         except Exception as exc:
-            # Deliberately broad: any unexpected handler exception is a
-            # definite FAILURE, not a crash of the executor itself.
+            # Deliberately broad: any unexpected exception from the
+            # boundary or the handler it wraps is a definite FAILURE, not
+            # a crash of the executor itself.
             return ExecutionResult(
                 response=ToolResponse(success=False, error=str(exc)),
                 outcome=ExecutionOutcome.FAILURE,
