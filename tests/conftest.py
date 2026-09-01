@@ -290,12 +290,16 @@ def recovery_attempt_repository(conn: sqlite3.Connection) -> SqliteRecoveryAttem
 def recovery_service(
     orchestrator: Orchestrator,
     recovery_attempt_repository: SqliteRecoveryAttemptRepository,
+    tool_execution_repository: SqliteToolExecutionRepository,
+    verification_repository: SqliteVerificationRepository,
     audit_recorder: AuditRecorder,
     id_generator: SequentialIdGenerator,
 ) -> RecoveryService:
     return RecoveryService(
         orchestrator=orchestrator,
         recovery_attempt_repository=recovery_attempt_repository,
+        tool_execution_repository=tool_execution_repository,
+        verification_repository=verification_repository,
         audit=audit_recorder,
         id_generator=id_generator,
     )

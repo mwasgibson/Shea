@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 from shea.audit.recorder import AuditRecorder
-from shea.contracts.enums import TaskState
-from shea.contracts.models import RecoveryAttempt, Task
+from shea.contracts.enums import (
+    RecoveryStrategy,
+    TaskState,
+)
+from shea.contracts.models import (
+    RecoveryAttempt,
+    RecoveryDecision,
+    Task,
+)
 from shea.core.orchestrator import Orchestrator
 from shea.ports.id_generator import IdGenerator
-from shea.ports.repositories import RecoveryAttemptRepository
+from shea.ports.repositories import (
+    RecoveryAttemptRepository,
+    ToolExecutionRepository,
+    VerificationRepository,
+)
 
+from .classifier import FailureClassifier
 from .compensator import Compensator, default_compensator
+from .planner import RecoveryPlanner
 
 DEFAULT_MAX_ATTEMPTS = 3
 
@@ -90,42 +103,98 @@ class RecoveryService:
         *,
         orchestrator: Orchestrator,
         recovery_attempt_repository: RecoveryAttemptRepository,
+        tool_execution_repository: ToolExecutionRepository,
+        verification_repository: VerificationRepository,
         audit: AuditRecorder,
         id_generator: IdGenerator,
+        classifier: FailureClassifier | None = None,
+        planner: RecoveryPlanner | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         self._orchestrator = orchestrator
         self._attempts = recovery_attempt_repository
+        self._executions = tool_execution_repository
+        self._verifications = verification_repository
         self._audit = audit
         self._ids = id_generator
+        self._classifier = classifier or FailureClassifier()
+        self._planner = planner or RecoveryPlanner()
         self._max_attempts = max_attempts
 
-    def begin_recovery(self, task: Task) -> Task:
+    def plan_recovery(self, task: Task) -> RecoveryDecision:
         if task.state is not TaskState.FAILED:
             raise TaskNotFailedError(task.id, task.state)
 
+        execution = self._executions.get_latest_by_task(task.id)
+
+        if execution is None:
+            raise ValueError(
+                f"Task {task.id!r} has no execution record."
+            )
+
+        attempts = self._attempts.list_by_task(task.id)
+        verification = self._verifications.get_latest_by_task(task.id)
+
+        classification = self._classifier.classify(execution)
+
+        decision = self._planner.decide(
+            execution,
+            classification,
+            attempts_made=len(attempts),
+            verification=verification,
+        )
+
+        self._audit.record(
+            actor="recovery_service",
+            component="recovery.planner",
+            event_type="recovery.decision",
+            action="plan_recovery",
+            result=decision.strategy.value,
+            request_id=task.request_id,
+            task_id=task.id,
+            metadata={
+                "strategy": decision.strategy.value,
+                "reason": decision.reason,
+                "failure_category": classification.category.value,
+                "retryable": classification.retryable,
+                "recoverable": classification.recoverable,
+            },
+        )
+
+        return decision
+
+    def begin_recovery(self, task: Task) -> Task:
         previous_attempts = self._attempts.list_by_task(task.id)
         attempt_number = len(previous_attempts) + 1
 
+        # Enforce budget limits before planning strategies
         if attempt_number > self._max_attempts:
-            self._audit.record(
-                actor="recovery_service",
-                component="recovery.manager",
-                event_type="recovery.exhausted",
-                action="begin_recovery",
-                result="exhausted",
-                request_id=task.request_id,
-                task_id=task.id,
-                metadata={
-                    "attempts_made": len(previous_attempts),
-                    "max_attempts": self._max_attempts,
-                },
+            raise RecoveryExhaustedError(
+                task.id,
+                len(previous_attempts),
+                self._max_attempts,
             )
-            raise RecoveryExhaustedError(task.id, len(previous_attempts), self._max_attempts)
+
+        decision = self.plan_recovery(task)
+
+        if decision.strategy is RecoveryStrategy.SECURITY_HALT:
+            return self._orchestrator.advance(task.id, "security_halt")
+
+        if decision.strategy is RecoveryStrategy.ABORT:
+            raise RecoveryExhaustedError(
+                task.id,
+                len(previous_attempts),
+                self._max_attempts,
+            )
 
         self._attempts.save(
-            RecoveryAttempt(id=self._ids.new_id(), task_id=task.id, attempt_number=attempt_number)
+            RecoveryAttempt(
+                id=self._ids.new_id(),
+                task_id=task.id,
+                attempt_number=attempt_number,
+            )
         )
+
         self._audit.record(
             actor="recovery_service",
             component="recovery.manager",
@@ -134,18 +203,24 @@ class RecoveryService:
             result="attempting",
             request_id=task.request_id,
             task_id=task.id,
-            metadata={"attempt_number": attempt_number},
+            metadata={
+                "attempt_number": attempt_number,
+                "strategy": decision.strategy.value,
+            },
         )
 
         return self._orchestrator.advance(task.id, "retry")
 
     def resolve_recovery(
-        self, task: Task, compensator: Compensator = default_compensator
+        self,
+        task: Task,
+        compensator: Compensator = default_compensator,
     ) -> Task:
         if task.state is not TaskState.RECOVERING:
             raise TaskNotRecoveringError(task.id, task.state)
 
         attempt = self._attempts.get_latest_by_task(task.id)
+
         if attempt is None:
             raise MissingRecoveryAttemptError(task.id)
 
@@ -155,14 +230,23 @@ class RecoveryService:
         attempt.recovered = outcome.restored
         attempt.method = outcome.method
         attempt.explanation = outcome.explanation
+
         self._attempts.save(attempt)
 
         self._audit.record(
             actor="recovery_service",
             component="recovery.manager",
-            event_type="recovery.recovered" if outcome.restored else "recovery.failed",
+            event_type=(
+                "recovery.recovered"
+                if outcome.restored
+                else "recovery.failed"
+            ),
             action="resolve_recovery",
-            result="recovered" if outcome.restored else "not_recovered",
+            result=(
+                "recovered"
+                if outcome.restored
+                else "not_recovered"
+            ),
             request_id=task.request_id,
             task_id=task.id,
             metadata={
@@ -171,8 +255,10 @@ class RecoveryService:
             },
         )
 
-        event = "recovered" if outcome.restored else "recovery_failed"
-        return self._orchestrator.advance(task.id, event)
+        return self._orchestrator.advance(
+            task.id,
+            "recovered" if outcome.restored else "recovery_failed",
+        )
 
     def resolve_blocked(self, task: Task, *, resume: bool) -> Task:
         """Resolve a BLOCKED task, regardless of why it was blocked (a
@@ -184,6 +270,7 @@ class RecoveryService:
             raise TaskNotBlockedError(task.id, task.state)
 
         event = "unblock" if resume else "cancel"
+
         self._audit.record(
             actor="recovery_service",
             component="recovery.manager",
@@ -192,6 +279,7 @@ class RecoveryService:
             result="resumed" if resume else "cancelled",
             request_id=task.request_id,
             task_id=task.id,
-            metadata={"resume": resume},
+            metadata={"resumed": resume},
         )
+
         return self._orchestrator.advance(task.id, event)

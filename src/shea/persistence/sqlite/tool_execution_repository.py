@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from typing import Any
 
 from shea.contracts.enums import ExecutionOutcome
@@ -33,9 +34,25 @@ class SqliteToolExecutionRepository:
         self._conn.execute(
             """
             INSERT INTO tool_executions
-                (id, task_id, tool, action, outcome, success, data, error)
+                (
+                    id, task_id, tool, action, outcome, success, data, error, 
+                    attempt_number, idempotency_key, started_at, finished_at, metadata
+                )
             VALUES
-                (:id, :task_id, :tool, :action, :outcome, :success, :data, :error)
+                (
+                    :id, :task_id, :tool, :action, :outcome, :success, :data, 
+                    :error, :attempt_number, :idempotency_key, :started_at, :finished_at, :metadata
+                )
+            ON CONFLICT(id) DO UPDATE SET
+                outcome = excluded.outcome,
+                success = excluded.success,
+                data = excluded.data,
+                error = excluded.error,
+                attempt_number = excluded.attempt_number,
+                idempotency_key = excluded.idempotency_key,
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                metadata = excluded.metadata    
             """,
             {
                 "id": record.id,
@@ -46,6 +63,19 @@ class SqliteToolExecutionRepository:
                 "success": int(record.success),
                 "data": _serialize_data(record.data),
                 "error": record.error,
+                "attempt_number": int(record.attempt_number),
+                "idempotency_key": record.idempotency_key,
+                "started_at": (
+                    record.started_at.isoformat()
+                    if record.started_at
+                    else None
+                ),
+                "finished_at": (
+                    record.finished_at.isoformat()
+                    if record.finished_at
+                    else None
+                ),
+                "metadata": _serialize_data(record.metadata),
             },
         )
         self._conn.commit()
@@ -66,6 +96,7 @@ class SqliteToolExecutionRepository:
 
 
 def _row_to_record(row: sqlite3.Row) -> ToolExecutionRecord:
+
     return ToolExecutionRecord(
         id=row["id"],
         task_id=row["task_id"],
@@ -75,4 +106,9 @@ def _row_to_record(row: sqlite3.Row) -> ToolExecutionRecord:
         success=bool(row["success"]),
         data=json.loads(row["data"]) if row["data"] is not None else None,
         error=row["error"],
+        attempt_number=int(row["attempt_number"]),
+        idempotency_key=row["idempotency_key"],
+        started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+        finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
+        metadata=json.loads(row["metadata"]) if row["metadata"] is not None else {},
     )

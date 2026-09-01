@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .enums import ExecutionOutcome, RiskLevel, TaskState
+from .enums import (
+    ExecutionOutcome,
+    FailureCategory,
+    RecoveryStrategy,
+    RiskLevel,
+    TaskState,
+)
 
 # NOTE on scope: several of these contracts (Intent, Plan, Decision,
 # RiskAssessment, Authorization) describe the *shape* that later phases
@@ -209,7 +215,11 @@ class ToolExecutionRecord:
     success: bool
     data: Any = None
     error: str | None = None
-
+    attempt_number: int = 1
+    idempotency_key: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 @dataclass
 class VerificationRecord:
@@ -226,6 +236,11 @@ class VerificationRecord:
     verified: bool
     method: str
     explanation: str = ""
+    observed_state: Any = None
+    expected_state: Any = None
+    confidence: float = 1.0
+    side_effect_detected: bool = False
+    retry_safe: bool = False
 
 
 @dataclass
@@ -245,3 +260,74 @@ class RecoveryAttempt:
     recovered: bool | None = None
     method: str = ""
     explanation: str = ""
+    
+@dataclass(frozen=True)
+class FailureClassification:
+    """Normalized description of an execution failure."""
+
+    category: FailureCategory
+    retryable: bool
+    recoverable: bool
+    reversible: bool
+    requires_verification: bool
+    security_relevant: bool
+    explanation: str = ""
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Rules governing whether and how an execution may be retried."""
+
+    max_attempts: int = 3
+    initial_delay_seconds: float = 1.0
+    max_delay_seconds: float = 60.0
+    exponential_backoff: bool = True
+    jitter: bool = True
+    require_idempotency: bool = True
+    reverify_before_retry: bool = True
+
+
+@dataclass(frozen=True)
+class RecoveryDecision:
+    """The deterministic strategy selected for a failed operation."""
+
+    strategy: RecoveryStrategy
+    reason: str
+    requires_verification: bool = False
+    requires_user_authorization: bool = False
+    safe_to_retry: bool = False
+
+
+@dataclass(frozen=True)
+class VerificationOutcome:
+    """Result returned by a tool-specific verifier."""
+
+    verified: bool
+    method: str
+    explanation: str = ""
+    observed_state: Any = None
+    expected_state: Any = None
+    confidence: float = 1.0
+    side_effect_detected: bool = False
+    retry_safe: bool = False
+
+
+@dataclass
+class RecoveryCheckpoint:
+    """Durable recovery checkpoint for multi-step execution."""
+
+    task_id: str
+    plan_id: str | None
+    step_id: str | None
+    state: str
+    last_verified_step: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])    
+    
+@dataclass
+class RecoveryDecisionRecord:
+    id: str
+    task_id: str
+    strategy: RecoveryStrategy
+    reason: str
+    attempt_number: int
+    created_at: datetime    

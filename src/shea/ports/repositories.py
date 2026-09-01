@@ -9,6 +9,7 @@ from shea.contracts.models import (
     Intent,
     Plan,
     RecoveryAttempt,
+    RecoveryDecisionRecord,
     RiskAssessment,
     Task,
     ToolExecutionRecord,
@@ -121,3 +122,18 @@ class RecoveryAttemptRepository(Protocol):
     def list_by_task(self, task_id: str) -> list[RecoveryAttempt]: ...
 
     def get_latest_by_task(self, task_id: str) -> RecoveryAttempt | None: ...
+    
+class RecoveryDecisionRepository(Protocol):
+    """Persists the recovery strategy selected for an execution."""
+
+    def save(self, decision: RecoveryDecisionRecord) -> None: ...
+
+    def get_latest_by_task(
+        self,
+        task_id: str,
+    ) -> RecoveryDecisionRecord | None: ...
+
+    def list_by_task(
+        self,
+        task_id: str,
+    ) -> list[RecoveryDecisionRecord]: ...    

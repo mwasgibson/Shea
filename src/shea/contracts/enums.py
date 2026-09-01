@@ -66,3 +66,38 @@ class PolicyVerdict(StrEnum):
     ALLOWED = "ALLOWED"
     REQUIRES_AUTHORIZATION = "REQUIRES_AUTHORIZATION"
     DENIED = "DENIED"
+    
+class FailureCategory(StrEnum):
+    """Normalized failure categories used by Recovery."""
+
+    TRANSIENT = "TRANSIENT"
+    TIMEOUT = "TIMEOUT"
+    NETWORK = "NETWORK"
+    RATE_LIMITED = "RATE_LIMITED"
+
+    AUTHENTICATION = "AUTHENTICATION"
+    AUTHORIZATION = "AUTHORIZATION"
+    INVALID_INPUT = "INVALID_INPUT"
+    NOT_FOUND = "NOT_FOUND"
+    CONFLICT = "CONFLICT"
+
+    RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
+    DEPENDENCY = "DEPENDENCY"
+
+    SECURITY = "SECURITY"
+    UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
+    PERMANENT = "PERMANENT"
+    UNKNOWN = "UNKNOWN"
+
+
+class RecoveryStrategy(StrEnum):
+    """Action selected by the Recovery Planner."""
+
+    RETRY = "RETRY"
+    REVERIFY = "REVERIFY"
+    COMPENSATE = "COMPENSATE"
+    ROLLBACK = "ROLLBACK"
+    RESUME = "RESUME"
+    ABORT = "ABORT"
+    ESCALATE = "ESCALATE"
+    SECURITY_HALT = "SECURITY_HALT"    

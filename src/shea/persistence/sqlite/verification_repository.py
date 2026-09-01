@@ -12,8 +12,14 @@ class SqliteVerificationRepository:
     def save(self, record: VerificationRecord) -> None:
         self._conn.execute(
             """
-            INSERT INTO verifications (id, task_id, verified, method, explanation)
-            VALUES (:id, :task_id, :verified, :method, :explanation)
+            INSERT INTO verifications (
+                id, task_id, verified, method, explanation, observed_state, 
+                expected_state, confidence, side_effect_detected, retry_safe
+                )
+            VALUES (
+                :id, :task_id, :verified, :method, :explanation, :observed_state, 
+                :expected_state, :confidence, :side_effect_detected, :retry_safe
+                )
             """,
             {
                 "id": record.id,
@@ -21,6 +27,11 @@ class SqliteVerificationRepository:
                 "verified": int(record.verified),
                 "method": record.method,
                 "explanation": record.explanation,
+                "observed_state": record.observed_state,
+                "expected_state": record.expected_state,
+                "confidence": record.confidence,
+                "side_effect_detected": int(record.side_effect_detected),
+                "retry_safe": int(record.retry_safe),
             },
         )
         self._conn.commit()
@@ -47,4 +58,9 @@ def _row_to_record(row: sqlite3.Row) -> VerificationRecord:
         verified=bool(row["verified"]),
         method=row["method"],
         explanation=row["explanation"],
+        observed_state=row["observed_state"],
+        expected_state=row["expected_state"],
+        confidence=row["confidence"],
+        side_effect_detected=bool(row["side_effect_detected"]),
+        retry_safe=bool(row["retry_safe"]),
     )
