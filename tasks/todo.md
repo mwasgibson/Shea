@@ -1,6 +1,6 @@
 # SHEA — Todo
 
-## Phase 1: Core Foundation
+## Phase 1: Core Foundation (this session)
 
 - [x] Directory scaffold (`src/shea/...`, `tests/...`)
 - [x] Contracts: enums (`TaskState`, `RiskLevel`, `ExecutionOutcome`) + dataclasses
@@ -77,6 +77,76 @@
 - [x] Property tests: default verifier only ever verifies genuine SUCCESS+success
       across randomized inputs; default compensator never reports restored
 - [x] Full suite verified: 112/112 pytest, mypy --strict clean, ruff clean
+
+## Phase 5: Intent Understanding & Planning
+
+- [x] Contracts: `ModelResponse`; `Intent.task_id` field
+- [x] `shea.model` — `ModelProvider` port (`generate`/`health`/`capabilities`,
+      `stream()` deliberately deferred), `ScriptedModelProvider` (deterministic
+      queued-response double, not a production adapter)
+- [x] `shea.understanding` — `DeterministicIntentMatcher` (pure, ordered substring
+      triggers) + `IntentParser` (pure) implementing the doc's hybrid: deterministic
+      first, model fallback second; `AmbiguousIntentError` below confidence
+      threshold, `MalformedModelOutputError` for unusable model output
+- [x] `shea.planning` — `PlanTemplateRegistry` (pure), `validate_plan()` (pure —
+      the "model suggested this" vs "Shea will act on this" boundary),
+      `capabilities_for_plan()` (pure — bridges Planning to Decision), and
+      `PlanningService` (integration layer, sole caller of `start_planning`/
+      `plan_ready`/`plan_failed`/`block`/`attach_plan`)
+- [x] `Orchestrator.attach_plan()` — keeps Task mutation centralized
+- [x] SQLite migration 0005 (`intents`) + `SqliteIntentRepository`
+- [x] Unit tests: scripted provider (5), intent parser (12), plan templates/
+      validator/capabilities (9), planning service integration (8)
+- [x] Property tests: ambiguous-iff-below-threshold across randomized
+      confidence/threshold pairs; missing-required-field always raises
+- [x] Capstone: `test_end_to_end_pipeline.py` — raw text through Planning,
+      Decision, Execution, Verification to `COMPLETED`, nothing hand-driving
+      the state machine
+- [x] Verified directly by the user after a mid-phase sandbox filesystem
+      reset required rebuilding from the last checkpointed zip — I don't
+      have an exact pytest/mypy/ruff count logged for this phase in
+      isolation; the next fully-logged run (217/217, Phase 6 complete)
+      includes all of Phase 5 passing within it.
+
+## Phase 6: Security & Trust
+
+- [x] `shea.security` — `NetworkPolicy`/`is_url_allowed` (SSRF: blocks
+      loopback/private/link-local/reserved IP literals + known dangerous
+      hostnames), `FilesystemPolicy`/`is_path_allowed` (pure logical path-scope
+      checking), `SecretRedactor` (pattern-based, recursive over nested
+      dicts/lists), `PromptInjectionDetector` (heuristic phrase matching),
+      `SecurityGate` (pure pre-execution request scanner), `SecurityService`
+      (integration layer — sole caller of `Orchestrator.advance(task_id,
+      "security_halt")`)
+- [x] `shea.ports.redactor.Redactor` — lets `AuditRecorder` optionally redact
+      metadata without `shea.audit` importing `shea.security` (avoids a
+      circular dependency, since `security` already depends on `audit`)
+- [x] `shea.ports.execution_boundary.ExecutionBoundary`/`ExecutionScope` —
+      the real "Sandbox" pipeline stage (timeout + redaction), receiving an
+      already-resolved handler rather than a registry, so exactly one code
+      path can ever invoke a handler
+- [x] `shea.tools.boundary.UnsafeExecutionBoundary` — `ToolExecutor`'s default
+      when no real sandbox is configured (lives in `tools/`, not `security/`,
+      so `shea.tools` never depends on `shea.security`)
+- [x] `shea.security.sandbox.SandboxedExecutionBoundary` — timeout mapped to
+      `UnknownOutcomeError` (not `FAILURE` — Section 12.13), response/error
+      redaction via injected `SecretRedactor`
+- [x] `ExecutionService` gained optional `security_service` param — when
+      supplied, `execute()` calls `SecurityService.enforce()` structurally
+      before anything else, so security enforcement can't be forgotten by a
+      caller (see review below for the bug this replaced)
+- [x] Unit tests: network policy (7), filesystem policy (7), secrets (7),
+      audit redaction (2), injection detector (4), security gate (8),
+      execution boundaries (7), security service (9), plus the
+      double-execution regression test in `test_tool_executor.py`
+- [x] Property tests: every generated loopback/private/link-local IPv4
+      literal always blocked; public-looking IPs outside reserved ranges
+      always allowed; paths under/outside an allowed root always
+      allowed/blocked
+- [x] Capstone updated: `test_end_to_end_pipeline.py` now wires
+      `SecurityService` into `ExecutionService` and calls `scan_output()`
+      after execution, before verification
+- [x] Full suite verified: 253/253 pytest, mypy --strict clean, ruff clean
 
 ## Explicitly deferred to later phases (not started)
 
@@ -283,3 +353,108 @@ self-contained slice.
 piece before a real LLM enters the loop, and the first subsystem that
 actually produces a `Plan` (currently just typed shape) for `DecisionService`
 to evaluate, rather than tests driving the state machine by hand.
+
+---
+
+### Phase 5 Review
+
+**What the capstone test actually proves:** a task can go from a raw text
+string to `COMPLETED` calling only public service methods, in the order a
+real caller would use them — no test anywhere reaches into the state
+machine directly for this path. That's the concrete payoff of every prior
+phase's "sole caller of X transition" discipline: the pieces actually
+compose.
+
+**Known simplifications, intentional for Phase 5:**
+
+- `DeterministicIntentMatcher` is ordered case-insensitive substring
+  matching, not real NLU — documented as a starting point, not a claim of
+  sophistication.
+- No real model/LLM API integration ships — `ScriptedModelProvider` is a
+  deterministic double. Wiring an actual provider is Provider Routing's job.
+- `IntentParser`/`PlanningService`'s model-fallback prompts
+  (`_build_intent_prompt`, `_build_plan_prompt`) are simple f-strings, not
+  tuned prompts — they exist to give the fallback path something concrete
+  to validate against, not as production prompt engineering.
+
+**Next natural step (identified at the time):** Security & Trust — noted
+as deliberately deferred until there was an actual model boundary to
+constrain, which Phase 5 just built.
+
+---
+
+### Phase 6 Review
+
+**A user-caught bug, — worth recording accurately.**
+While reviewing this phase's code, i found that Security had been
+built but never wired into anything (correct — `SecurityGate`/
+`SecurityService` existed but nothing called them), and supplied a first
+attempt at fixing it via a `ToolExecutor` boundary. That attempt had a real
+bug: after computing a response through the configured boundary, the code
+fell through to an unconditional second, raw `handler(request)` call —
+discarding the boundary's result entirely and, when a boundary was
+configured, invoking the handler twice. A non-idempotent tool would have
+run its side effect twice. The fix: `ToolExecutor` now has exactly one call
+site that can invoke a handler (`self._boundary.run(...)`), with
+`UnsafeExecutionBoundary` as the structural default rather than a
+special-cased branch — "no boundary configured" and "explicitly configured
+for no isolation" are now the same code path, not two.
+
+**A second issue caught during that same review:** the original boundary
+attempt reimplemented URL/path scanning inline, checking only arguments
+literally named `"path"` or `"url"` — narrower than, and inconsistent
+with, `SecurityGate.check_request()`'s general shape-based scan across
+every string argument. Consolidated: `SandboxedExecutionBoundary` now
+contains zero policy-checking logic of its own — that lives only in
+`SecurityGate`, called once, upstream, by `SecurityService.enforce()` —
+and does only the mechanical sandboxing (timeout, redaction) a "Sandbox"
+pipeline stage is actually responsible for.
+
+**What the tests actually prove:**
+
+- `test_injected_boundary_is_used_and_handler_is_called_exactly_once` —
+  a spy boundary and a spy handler both assert call count `== 1`,
+  directly disproving the double-invocation bug rather than just testing
+  around it.
+- `test_argument_key_name_does_not_matter_for_url_detection` — an SSRF
+  attempt in an argument named `target` (not `url`) is still caught,
+  proving the shape-based scan actually replaced the narrower key-based one.
+- `test_enforce_halts_task_on_ssrf_attempt` +
+  `test_security_halt_is_terminal_even_after_this_service` — a violation
+  drives the task to `SECURITY_HALT`, and that state is then proven
+  terminal (any further `advance()` call raises `IllegalTransitionError`),
+  not just documented as terminal.
+- `test_sandboxed_boundary_raises_unknown_outcome_on_timeout` — a real
+  0.3s-sleeping handler against a 0.05s timeout produces `UnknownOutcomeError`,
+  not a `FAILURE` outcome — Section 12.13's "connection dies, might have
+  succeeded" principle applied to the timeout case specifically, with an
+  actual slow handler, not a mocked timer.
+- The property tests generate loopback/private/link-local addresses across
+  every octet Hypothesis tries and confirm none of them slip through.
+
+**Known simplifications, intentional for Phase 6:**
+
+- `NetworkPolicy`/`FilesystemPolicy` check literal request content, not
+  runtime behavior — DNS rebinding (a hostname resolving to a private IP
+  at request time) and symlink-based path escapes are both documented,
+  explicit gaps that require real network resolution / OS-level realpath
+  checks at actual access time, which belongs in a future real sandbox
+  runtime, not these pure policy functions.
+- `PromptInjectionDetector` is a heuristic phrase list, not a classifier —
+  a determined attacker can phrase around it. Documented the same way
+  `default_verifier` documents its own honesty about being a fallback,
+  not a complete solution.
+- `SecurityService.scan_output()` records a security event but does not
+  itself halt the task on a detected injection attempt — per research doc
+  Section 11.6, untrusted content is data, not authority; a future policy
+  phase may want to make repeated or high-confidence detections
+  consequential, but that's a policy decision this phase deliberately
+  left unmade.
+- `SecretRedactor`'s patterns cover common shapes (AWS-style keys, bearer
+  tokens, `sk-` prefixes, key=value pairs) but cannot cover every possible
+  secret format — defense in depth, not the primary control (secrets
+  belong in a dedicated store per Section 11.7, not general context).
+
+**Next natural step:** Provider Routing — the last piece before a real
+model can actually be swapped in behind the `ModelProvider` port Phase 5
+defined, now that Security constrains what that model is allowed to do.
