@@ -1,4 +1,4 @@
-# SHEA — Phase 1–6: Foundation through Security & Trust
+# SHEA — Phase 1–7: Foundation through Provider Routing & Failover
 
 Phase 1 is the foundation layer (state machine, persistence, contracts,
 config). Phase 2 adds the Decision/Policy/Risk engine — the only
@@ -10,6 +10,10 @@ state machine always had a shape for. Phase 5 adds Intent Understanding
 Security & Trust: SSRF/path-scope protection, secret redaction, prompt
 injection detection, and a real sandboxing boundary around tool
 execution — the constraint layer around the model boundary Phase 5 built.
+Phase 7 adds Provider Routing & Failover — a`ProviderRoutingService` that
+structurally satisfies the `ModelProvider` port itself, so it's a drop-in
+replacement anywhere Phase 5's code expects a single provider, with health-based
+failover underneath.
 
 ## What's here
 
@@ -30,6 +34,7 @@ execution — the constraint layer around the model boundary Phase 5 built.
 | `shea.verification` | `Verifier`/`VerifierRegistry` (per-tool, mirrors `ToolRegistry`) and `VerificationService` — the only caller of `Orchestrator.advance(task_id, "verified" \| "verification_failed")`. Independently decides whether a tool's claimed success actually happened; a tool reporting success does not force verification to agree. |
 | `shea.recovery` | `Compensator` abstraction + `RecoveryService` — bounded Saga-style retry (`FAILED -> RECOVERING -> READY \| FAILED`), counted from persisted attempts, and `resolve_blocked()` for tasks Phase 3's `UNKNOWN` execution outcome routes to `BLOCKED`. |
 | `shea.security` | `NetworkPolicy`/`FilesystemPolicy` (SSRF and path-scope protection, pure), `SecretRedactor` (pattern-based, recursive), `PromptInjectionDetector` (heuristic), `SecurityGate` (pure pre-execution request scanner), `SecurityService` — the only caller of `Orchestrator.advance(task_id, "security_halt")`. Also `SandboxedExecutionBoundary` — the real "Sandbox" pipeline stage (timeout + redaction). |
+| `shea.provider` | `ProviderProfile`/`ProviderTrustLevel` (LOCAL/TRUSTED_REMOTE/UNTRUSTED), `HealthTracker` (sliding-window health), `FailureCategory`/`classify_exception()`, `ProviderRouter` (pure eligibility + ranking), `ProviderRoutingService` — structurally satisfies `ModelProvider` itself, so it's a drop-in for `IntentParser`/`PlanningService`. |
 | `shea.audit` | `AuditRecorder` — centralizes event ID / timestamp generation so no call site can emit a malformed audit event; optionally redacts metadata via an injected `Redactor`. |
 | `shea.adapters` | Production implementations of `Clock` and `IdGenerator` (real time, real UUIDs). Tests use fakes instead — see `tests/conftest.py`. |
 
@@ -124,6 +129,21 @@ timeout case specifically — and redacts secrets from tool responses via
 an injected `SecretRedactor`, the same redactor `AuditRecorder` can
 optionally use for its own metadata.
 
+Phase 7 sits underneath Phase 5's model boundary rather than above it —
+`ProviderRoutingService` (`shea/provider/service.py`) satisfies the
+`ModelProvider` port itself, so `IntentParser` and `PlanningService` can
+receive one in place of a single `ScriptedModelProvider` without any
+change to their own code; `test_service_is_a_drop_in_model_provider_for_
+intent_parser` proves this by actually constructing an `IntentParser`
+around one. Eligibility (`ProviderRouter.eligible()`) is a pure hard-filter
+chain, not weighted scoring — `ProviderTrustLevel.UNTRUSTED` is excluded
+unconditionally, the same non-negotiable shape as Phase 2's
+`PolicyVerdict.DENIED` and Phase 6's SSRF blocking, and
+`RoutingRequirements.require_local_only` means a local-only request can
+never be satisfied by a remote provider, not even as a failover when no
+local provider exists at all (research doc Section 8.11's exact scenario,
+proven directly in `test_require_local_only_never_fails_over_to_remote`).
+
 ## What's deliberately NOT here yet
 
 - Any real model/LLM API integration (`ScriptedModelProvider` is a
@@ -146,8 +166,19 @@ optionally use for its own metadata.
   scan_output()` audits, it doesn't halt; untrusted content is data, not
   authority (Section 11.6), and making detections consequential is a
   policy decision this phase deliberately left unmade
+- Any real model/LLM API adapter — `ScriptedModelProvider` remains the
+  only concrete `ModelProvider` implementation; `ProviderRoutingService`
+  routes between whatever is registered, but nothing here talks to an
+  actual API yet
+- Same-provider retry with backoff/jitter, and gradual traffic recovery
+  percentages (research doc Sections 8.14/8.17) — every provider failure
+  fails over to the next eligible provider immediately; `FailureCategory`/
+  `RETRYABLE_CATEGORIES` exist for a future same-provider-retry loop to
+  consult, but that loop isn't built
+- Context-window reduction/reassembly on failover (Section 8.12) —
+  `ProviderRouter` filters out providers whose context limit is too
+  small rather than trying to fit the request into a smaller one
 - Audio/voice pipeline
-- Provider routing / failover
 
 These are later phases per the technical doc's Development Plan (Section 20).
 
@@ -192,8 +223,10 @@ src/shea/
 ├── security/                    # NetworkPolicy, FilesystemPolicy, SecretRedactor,
 │                                 # PromptInjectionDetector, SecurityGate,
 │                                 # SandboxedExecutionBoundary, SecurityService
-├── audit/                        # AuditRecorder
-└── adapters/                      # concrete Clock / IdGenerator
+├── provider/                      # ProviderProfile, HealthTracker, FailureCategory,
+│                                   # ProviderRouter, ProviderRoutingService
+├── audit/                          # AuditRecorder
+└── adapters/                        # concrete Clock / IdGenerator
 
 tests/
 ├── unit/                 # one file per subsystem + capstone end-to-end test
