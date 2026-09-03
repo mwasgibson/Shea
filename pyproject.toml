@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "shea"
 version = "0.1.0"
-description = "SHEA — user-sovereign, modular AI agent runtime (Phase 1: core foundation)"
+description = "SHEA — user-sovereign, modular AI agent runtime (Phase 1-8: core hardening)"
 requires-python = ">=3.11"
 readme = "README.md"
 

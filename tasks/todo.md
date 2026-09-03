@@ -1,6 +1,6 @@
 # SHEA — Todo
 
-## Phase 1: Core Foundation (this session)
+## Phase 1: Core Foundation
 
 - [x] Directory scaffold (`src/shea/...`, `tests/...`)
 - [x] Contracts: enums (`TaskState`, `RiskLevel`, `ExecutionOutcome`) + dataclasses
@@ -148,18 +148,81 @@
       after execution, before verification
 - [x] Full suite verified: 253/253 pytest, mypy --strict clean, ruff clean
 
-## Explicitly deferred to later phases (not started)
+## Phase 7: Provider Routing & Failover
 
-- [ ] Intent Understanding & Planning (LLM-in-the-loop, constrained output)
-- [ ] Tool Registry + Executor + capability declarations
-- [ ] Security & Trust boundary (sandboxing, threat detection, secrets)
-- [ ] Provider Routing & failover
+- [x] `shea.provider` — `ProviderTrustLevel` (LOCAL/TRUSTED_REMOTE/UNTRUSTED,
+      the last non-negotiable per Section 8.6), `ProviderProfile`,
+      `HealthTracker` (sliding-window HEALTHY/DEGRADED/UNAVAILABLE),
+      `FailureCategory` (doc's exact taxonomy) + `RETRYABLE_CATEGORIES` +
+      `classify_exception()`, `RoutingRequirements`, `ProviderRouter` (pure
+      eligibility filtering + ranking), `ProviderRoutingService`
+      (integration layer)
+- [x] `ProviderRoutingService` structurally satisfies the `ModelProvider`
+      port itself (`generate`/`health`/`capabilities`) — a drop-in
+      replacement anywhere a single `ModelProvider` was expected, so
+      `IntentParser`/`PlanningService` don't need to know routing exists
+- [x] Failover always considers a different eligible provider regardless of
+      failure category (a different provider may not share the same cause);
+      same-provider retry/backoff is a documented, not-yet-built extension
+- [x] `require_local_only` requirement — Section 8.11's exact scenario: a
+      local-only requirement can never be satisfied by a remote provider,
+      not even as a failover when no local provider exists at all
+- [x] Every attempt, failover, exhaustion, and no-eligible-provider case is
+      audited via the existing `AuditRecorder`
+- [x] Unit tests: health tracker (6), failure classification (7), router
+      eligibility (8), routing service integration (12)
+- [x] Property tests: UNTRUSTED never eligible regardless of health/
+      capabilities (mirrors Phase 2's PolicyVerdict.DENIED property and
+      Phase 6's SSRF property); UNAVAILABLE health always excludes;
+      eligibility iff required capabilities are a subset of available ones
+- [x] Full suite verified: 253/253 pytest, mypy --strict clean, ruff clean
+
+## Not yet built — explicitly flagged, not silently missing
+
 - [ ] Memory & Context management
 - [ ] Activation & Audio pipeline
-- [ ] Extensions & Updates
-- [ ] Observability (metrics/tracing) beyond the audit trail
-- [ ] Full testing pyramid (integration, E2E, security, chaos) — only unit +
-      property exist so far
+- [ ] Interaction layer (CLI/GUI/API adapters producing a uniform `Request`
+      — `PlanningService.create_and_plan()` currently builds `Request`
+      itself with `source="text"` hardcoded)
+- [ ] Extensions & Updates (plugin manifest, signing, sandboxed activation)
+- [ ] Observability beyond the audit trail (structured logs, metrics,
+      tracing, correlation IDs across a request)
+- [ ] Multi-step plan execution — `ExecutionService` runs one tool call
+      per invocation; a real `Plan` with multiple `PlanStep`s is never
+      looped over, checkpointed, or resumed
+- [ ] Real OS-level sandboxing (namespaces/seccomp/cgroups or platform
+      equivalent) — `SandboxedExecutionBoundary` enforces timeout and
+      redaction only; a thread timeout does not terminate an underlying
+      process, socket, or file handle a tool already opened
+- [ ] Tool schemas (input/output JSON schema, per-action argument
+      validation) — `ToolDeclaration` has capabilities but no argument
+      contract; a malformed argument is only caught by the tool itself
+- [ ] Authorization binding to plan/step/argument hash + expiry + replay
+      protection — an `Authorization` currently belongs to a task, not to
+      a specific plan version; nothing prevents reusing one after the
+      plan it was granted for has changed
+- [ ] Dedicated secret store (OS keychain/Secret Service/Credential
+      Manager) — `SecretRedactor` prevents secrets leaking into audit
+      metadata, but there is no `SecretStore.get/set/delete/rotate`
+      abstraction; secrets aren't actually managed, just redacted after
+      the fact
+- [ ] Audit tamper-evidence (hash-chained events) — `audit_events` is
+      insert-only by API (`AuditSink` exposes no update/delete), but
+      nothing detects direct database tampering
+- [ ] Cross-repository transactional atomicity — state, authorization,
+      and audit writes each commit independently; a crash between two
+      commits can leave contradictory persisted facts. Phase 8 makes
+      state+audit atomic for the highest-stakes transitions
+      (`Orchestrator.advance`, `SecurityService.enforce`'s halt path);
+      a full sweep across every repository is still open
+- [ ] Concurrency model (task scheduler, per-tool concurrency limits,
+      cancellation as a real execution mechanism, backpressure)
+- [ ] Resource governance (CPU/RAM/disk/output-size/call-rate limits)
+- [ ] CI/CD (no `.github/workflows` yet — every commit should run pytest
+      + mypy --strict + ruff automatically, not on trust)
+- [ ] Full testing pyramid — unit + property exist; no integration/E2E/
+      adversarial security suite yet (SSRF via IPv6, Unicode path tricks,
+      sandbox escape, replay attacks, etc.)
 
 ## Phase 1 Review
 
@@ -385,8 +448,8 @@ constrain, which Phase 5 just built.
 
 ### Phase 6 Review
 
-**A user-caught bug, — worth recording accurately.**
-While reviewing this phase's code, i found that Security had been
+**A user-caught bug, not a self-caught one — worth recording accurately.**
+While reviewing this phase's code, the user found that Security had been
 built but never wired into anything (correct — `SecurityGate`/
 `SecurityService` existed but nothing called them), and supplied a first
 attempt at fixing it via a `ToolExecutor` boundary. That attempt had a real
@@ -458,3 +521,58 @@ pipeline stage is actually responsible for.
 **Next natural step:** Provider Routing — the last piece before a real
 model can actually be swapped in behind the `ModelProvider` port Phase 5
 defined, now that Security constrains what that model is allowed to do.
+
+---
+
+### Phase 7 Review
+
+**What the tests actually prove:**
+
+- `test_no_eligible_provider_raises_without_attempting_any` and
+  `test_missing_capability_provider_never_attempted` — both use a
+  call-recording provider subclass and assert zero calls, the same
+  "prove the handler was never reached" pattern used for Phase 3's
+  capability gate and Phase 6's security gate, applied here to provider
+  selection.
+- `test_require_local_only_never_fails_over_to_remote` — the literal
+  scenario research doc Section 8.11 describes, with only a remote
+  provider registered: routing must raise rather than quietly using it.
+- `test_service_is_a_drop_in_model_provider_for_intent_parser` — actually
+  constructs a real `IntentParser` with a `ProviderRoutingService` in the
+  `model_provider` slot and parses an intent through it, proving the
+  structural-typing claim behaviorally rather than just by inspection.
+- The property tests directly mirror the "non-negotiable tier" shape
+  established in Phase 2 (`PolicyVerdict.DENIED`) and Phase 6 (SSRF
+  blocking): `UNTRUSTED` is swept across every trust level, health state,
+  and capability combination Hypothesis generates, and never once
+  produces a non-empty eligible list.
+
+**Known simplifications, intentional for Phase 7:**
+
+- No same-provider retry with backoff/jitter (research doc Section
+  8.14) — every failure fails over to the next eligible provider
+  immediately. `FailureCategory`/`RETRYABLE_CATEGORIES` are captured now
+  so that mechanism has correct data to consult when built, but the
+  mechanism itself isn't built yet.
+- No gradual traffic recovery percentages (Section 8.17's "5% -> 25% ->
+  50% -> 100%") — `HealthTracker` recovers to HEALTHY as soon as the
+  sliding window's error rate drops, which the doc itself calls an
+  acceptable V1 fallback ("a simpler cooldown plus health-check
+  mechanism is enough").
+- `classify_exception()` only recognizes this codebase's own exception
+  types (`ModelUnavailableError`, `MalformedModelOutputError`). A real
+  provider adapter integrating an actual API needs to translate its own
+  errors (HTTP 429, connection resets, etc.) into the existing taxonomy
+  as it's built — documented as an extension point, not a gap discovered
+  later.
+- No context-window reduction/reassembly on failover (Section 8.12) —
+  `ProviderRouter` filters out providers whose `context_limit` is too
+  small rather than trying to fit the request into a smaller one.
+
+**Next natural step:** the Activation & Audio pipeline is the last major
+research-doc subsystem with no code behind it at all — voice ingress
+(mic capture, VAD, wake-word, streaming STT). Alternatively, since a
+`ModelProvider` can now be routed but still isn't backed by any real
+LLM API, wiring an actual provider adapter (even a single one, e.g. via
+an HTTP client behind the `ModelProvider` port) would be the thing that
+makes every LLM-shaped piece of this system stop being scripted/simulated.

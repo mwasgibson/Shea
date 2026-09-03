@@ -208,7 +208,7 @@ def tool_registry() -> ToolRegistry:
 
 @pytest.fixture
 def tool_executor(tool_registry: ToolRegistry) -> ToolExecutor:
-    return ToolExecutor(tool_registry)
+    return ToolExecutor(tool_registry, allow_unsafe_execution=True)
 
 
 @pytest.fixture
@@ -224,6 +224,7 @@ def execution_service(
     tool_execution_repository: SqliteToolExecutionRepository,
     audit_recorder: AuditRecorder,
     id_generator: SequentialIdGenerator,
+    security_service: SecurityService,
 ) -> ExecutionService:
     return ExecutionService(
         tool_executor=tool_executor,
@@ -232,6 +233,7 @@ def execution_service(
         tool_execution_repository=tool_execution_repository,
         audit=audit_recorder,
         id_generator=id_generator,
+        security_service=security_service,
     )
 
 

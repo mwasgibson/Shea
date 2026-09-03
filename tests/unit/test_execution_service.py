@@ -128,6 +128,7 @@ def test_execution_without_decision_raises(
     audit_recorder: AuditRecorder,
     id_generator: IdGenerator,
     tool_registry: ToolRegistry,
+    security_service: SecurityService,
 ) -> None:
     """Structurally, only DecisionService can move a task to RUNNING, and
     it always persists a Decision first — but ExecutionService checks
@@ -147,6 +148,7 @@ def test_execution_without_decision_raises(
         tool_execution_repository=tool_execution_repository,
         audit=audit_recorder,
         id_generator=id_generator,
+        security_service=security_service,
     )
     register_echo(tool_registry)
     request = ToolRequest(request_id="req-1", tool="echo", action="do_thing")

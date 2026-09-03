@@ -40,7 +40,7 @@ def test_handler_invoked_iff_required_is_subset_of_authorized(
 
     registry = ToolRegistry()
     registry.register(ToolDeclaration(name="tool", capabilities=required), handler)
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, allow_unsafe_execution=True)
     request = ToolRequest(request_id="req-1", tool="tool", action="do_thing")
 
     should_be_authorized = required <= authorized

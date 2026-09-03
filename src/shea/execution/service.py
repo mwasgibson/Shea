@@ -63,14 +63,14 @@ class ExecutionService:
     not implement isolation itself, it sequences the pipeline stages
     around it.
 
-    When constructed with a `security_service`, `execute()` calls
-    `SecurityService.enforce()` before doing anything else — making
-    security enforcement a structural part of every execution rather than
-    a separate step a caller might forget to invoke in the right order.
-    `security_service` is optional (defaults to None, skipping the check)
-    so existing callers and tests that construct ExecutionService without
-    one keep working unchanged; production wiring should always supply
-    one.
+    `security_service` is REQUIRED, not optional. Phases 1-7 defaulted it
+    to None (skipping the check) so tests could construct ExecutionService
+    without one — that made security enforcement a convention rather than
+    a mechanical guarantee, the exact gap the Phase 8 audit flagged: "the
+    comment explicitly says production wiring should provide it, but
+    that's a convention, not an architectural guarantee." There is no
+    execute() path that can run a tool without a SecurityService.enforce()
+    call happening first.
 
     Looks up the task's authorized capabilities from the persisted
     Decision (never from a caller-supplied value), so a capability check
@@ -87,7 +87,7 @@ class ExecutionService:
         tool_execution_repository: ToolExecutionRepository,
         audit: AuditRecorder,
         id_generator: IdGenerator,
-        security_service: SecurityService | None = None,
+        security_service: SecurityService,
     ) -> None:
         self._tool_executor = tool_executor
         self._orchestrator = orchestrator
@@ -101,11 +101,11 @@ class ExecutionService:
         if task.state is not TaskState.RUNNING:
             raise TaskNotRunningError(task.id, task.state)
 
-        if self._security is not None:
-            # Raises SecurityViolationError and drives the task to
-            # SECURITY_HALT itself on a violation; nothing further to do
-            # here on that path except let the exception propagate.
-            self._security.enforce(task, request)
+        # Raises SecurityViolationError and drives the task to
+        # SECURITY_HALT itself on a violation; nothing further to do here
+        # on that path except let the exception propagate. Unconditional
+        # — there is no flag or default that skips this call.
+        self._security.enforce(task, request)
 
         decision = self._decisions.get_by_task(task.id)
         if decision is None:

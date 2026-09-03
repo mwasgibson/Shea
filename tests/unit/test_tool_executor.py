@@ -29,7 +29,7 @@ def test_authorized_call_reaches_handler_and_returns_success() -> None:
         ToolDeclaration(name="test.tool", capabilities=frozenset({"network.connect"})),
         handler,
     )
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     result = executor.execute(
         make_request(), authorized_capabilities=frozenset({"network.connect"})
@@ -57,7 +57,7 @@ def test_unauthorized_capability_never_reaches_handler() -> None:
         ToolDeclaration(name="test.tool", capabilities=frozenset({"credential.access"})),
         handler,
     )
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     with pytest.raises(CapabilityNotAuthorizedError) as exc_info:
         executor.execute(make_request(), authorized_capabilities=frozenset({"weather.lookup"}))
@@ -83,7 +83,7 @@ def test_partial_capability_authorization_still_blocks() -> None:
         ),
         handler,
     )
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     with pytest.raises(CapabilityNotAuthorizedError) as exc_info:
         executor.execute(
@@ -100,7 +100,7 @@ def test_handler_returning_success_false_is_failure_outcome() -> None:
 
     registry = ToolRegistry()
     registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     result = executor.execute(make_request(), authorized_capabilities=frozenset())
 
@@ -114,7 +114,7 @@ def test_unexpected_exception_is_failure_outcome_not_unknown() -> None:
 
     registry = ToolRegistry()
     registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     result = executor.execute(make_request(), authorized_capabilities=frozenset())
 
@@ -133,7 +133,7 @@ def test_unknown_outcome_error_is_unknown_not_failure() -> None:
 
     registry = ToolRegistry()
     registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     result = executor.execute(make_request(), authorized_capabilities=frozenset())
 
@@ -165,7 +165,7 @@ def test_injected_boundary_is_used_and_handler_is_called_exactly_once() -> None:
 
     registry = ToolRegistry()
     registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
-    executor = ToolExecutor(registry, boundary=RecordingBoundary())
+    executor = ToolExecutor(registry, boundary=RecordingBoundary(), allow_unsafe_execution=True)
 
     result = executor.execute(make_request(), authorized_capabilities=frozenset())
 

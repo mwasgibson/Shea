@@ -48,6 +48,25 @@ class ExecutionResult:
     outcome: ExecutionOutcome
 
 
+class UnsafeExecutionNotAllowedError(Exception):
+    """Raised when ToolExecutor is constructed with no boundary and no
+    explicit `allow_unsafe_execution=True`.
+
+    Audit finding (see tasks/todo.md Phase 8): `ToolExecutor(registry)`
+    used to silently default to no isolation at all — a convention
+    ("production should inject a real boundary") rather than a mechanical
+    guarantee. This makes the unsafe path something a caller has to name
+    out loud, matching the same "no silent bypass" standard the
+    capability gate and security gate already hold themselves to.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "ToolExecutor requires either a real ExecutionBoundary or "
+            "allow_unsafe_execution=True — there is no silent unsafe default."
+        )
+
+
 class ToolExecutor:
     """Technical doc Component: Tool Executor ("Executes validated tool
     requests"), implementing the pipeline fragment from Section 5.1:
@@ -57,13 +76,25 @@ class ToolExecutor:
     Exactly one call site invokes a handler: `self._boundary.run(...)`.
     There is no fallback path that calls the handler directly, so a
     configured boundary can never be silently bypassed by a leftover
-    branch — the boundary defaults to UnsafeExecutionBoundary (no
-    isolation) rather than the executor sometimes skipping it.
+    branch. Unlike Phases 1-7, "no boundary configured" is no longer
+    treated the same as "explicitly configured for no isolation" — the
+    latter now requires `allow_unsafe_execution=True` to be spelled out
+    at the call site (see UnsafeExecutionNotAllowedError).
     """
 
-    def __init__(self, registry: ToolRegistry, boundary: ExecutionBoundary | None = None) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        boundary: ExecutionBoundary | None = None,
+        *,
+        allow_unsafe_execution: bool = False,
+    ) -> None:
         self._registry = registry
-        self._boundary: ExecutionBoundary = boundary or UnsafeExecutionBoundary()
+        if boundary is None:
+            if not allow_unsafe_execution:
+                raise UnsafeExecutionNotAllowedError()
+            boundary = UnsafeExecutionBoundary()
+        self._boundary: ExecutionBoundary = boundary
 
     def execute(
         self,

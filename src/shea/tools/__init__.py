@@ -4,6 +4,7 @@ from .executor import (
     ExecutionResult,
     ToolExecutor,
     UnknownOutcomeError,
+    UnsafeExecutionNotAllowedError,
 )
 from .registry import (
     ToolAlreadyRegisteredError,
@@ -19,6 +20,7 @@ __all__ = [
     "ExecutionResult",
     "ToolExecutor",
     "UnknownOutcomeError",
+    "UnsafeExecutionNotAllowedError",
     "ToolAlreadyRegisteredError",
     "ToolDeclaration",
     "ToolHandler",
