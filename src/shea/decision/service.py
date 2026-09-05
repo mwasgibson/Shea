@@ -13,6 +13,7 @@ from shea.ports.repositories import (
     DecisionRepository,
     RiskAssessmentRepository,
 )
+from shea.ports.unit_of_work import UnitOfWork
 
 from .confirmation import confirmation_rule_for
 from .exceptions import AuthorizationRequiredError, PolicyDeniedError
@@ -81,6 +82,7 @@ class DecisionService:
         audit: AuditRecorder,
         clock: Clock,
         id_generator: IdGenerator,
+        unit_of_work: UnitOfWork,
     ) -> None:
         self._policy = policy_engine
         self._risk = risk_engine
@@ -91,6 +93,7 @@ class DecisionService:
         self._audit = audit
         self._clock = clock
         self._ids = id_generator
+        self._uow = unit_of_work
 
     def evaluate_and_authorize(
         self,
@@ -131,17 +134,18 @@ class DecisionService:
             factors=risk_result.factors,
             explanation=risk_result.explanation,
         )
-        self._risk_assessments.save(risk_assessment)
-        self._audit.record(
-            actor="decision_service",
-            component="decision.risk",
-            event_type="decision.risk_assessed",
-            action="assess",
-            result="success",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={"level": risk_result.level.value, "factors": risk_result.factors},
-        )
+        with self._uow:
+            self._risk_assessments.save(risk_assessment)
+            self._audit.record(
+                actor="decision_service",
+                component="decision.risk",
+                event_type="decision.risk_assessed",
+                action="assess",
+                result="success",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"level": risk_result.level.value, "factors": risk_result.factors},
+            )
 
         rule = confirmation_rule_for(risk_result.level)
         requires_authorization = rule.requires_authorization or (
@@ -157,21 +161,22 @@ class DecisionService:
             requires_explicit_acknowledgement=rule.requires_explicit_acknowledgement,
             capabilities=sorted(capabilities),
         )
-        self._decisions.save(decision)
-        self._audit.record(
-            actor="decision_service",
-            component="decision.engine",
-            event_type="decision.recorded",
-            action="decide",
-            result="success",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={
-                "risk": risk_result.level.value,
-                "requires_authorization": requires_authorization,
-                "requires_explicit_acknowledgement": rule.requires_explicit_acknowledgement,
-            },
-        )
+        with self._uow:
+            self._decisions.save(decision)
+            self._audit.record(
+                actor="decision_service",
+                component="decision.engine",
+                event_type="decision.recorded",
+                action="decide",
+                result="success",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={
+                    "risk": risk_result.level.value,
+                    "requires_authorization": requires_authorization,
+                    "requires_explicit_acknowledgement": rule.requires_explicit_acknowledgement,
+                },
+            )
 
         authorization = self._resolve_authorization(
             task=task,
@@ -249,15 +254,16 @@ class DecisionService:
             granted_by=granted_by,
             explicit=explicit,
         )
-        self._authorizations.save(authorization)
-        self._audit.record(
-            actor=granted_by,
-            component="decision.authorization",
-            event_type=event_type,
-            action="grant",
-            result="granted",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={"explicit": explicit},
-        )
+        with self._uow:
+            self._authorizations.save(authorization)
+            self._audit.record(
+                actor=granted_by,
+                component="decision.authorization",
+                event_type=event_type,
+                action="grant",
+                result="granted",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"explicit": explicit},
+            )
         return authorization

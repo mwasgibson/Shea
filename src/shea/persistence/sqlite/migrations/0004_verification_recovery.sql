@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS recovery_attempts (
     resolved       INTEGER NOT NULL DEFAULT 0,
     recovered      INTEGER,
     method         TEXT NOT NULL DEFAULT '',
-    explanation    TEXT NOT NULL DEFAULT ''
+    explanation    TEXT NOT NULL DEFAULT '',
+    delay_seconds  REAL NOT NULL DEFAULT 0.0
 );
 
 CREATE INDEX IF NOT EXISTS idx_recovery_attempts_task_id ON recovery_attempts(task_id);

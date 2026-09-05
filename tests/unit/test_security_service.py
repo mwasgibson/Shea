@@ -4,11 +4,19 @@ import sqlite3
 
 import pytest
 
+from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Task, ToolRequest
 from shea.core.orchestrator import Orchestrator
+from shea.persistence.sqlite.task_repository import SqliteTaskRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
+from shea.ports.clock import Clock
+from shea.ports.id_generator import IdGenerator
 from shea.security.exceptions import SecurityViolationError
+from shea.security.gate import SecurityGate
+from shea.security.injection import PromptInjectionDetector
 from shea.security.service import SecurityService, TaskNotRunningForSecurityCheckError
+from tests.unit.test_orchestrator import _RaisingAuditSink  # pyright: ignore[reportPrivateUsage]
 
 
 def test_enforce_allows_ordinary_request(
@@ -124,3 +132,54 @@ def test_scan_output_records_nothing_for_clean_content(
         (running_task.id, "security.prompt_injection_detected"),
     ).fetchall()
     assert len(rows) == 0
+
+
+def test_violation_path_rolls_back_everything_if_halt_transition_fails(
+    security_gate: SecurityGate,
+    injection_detector: PromptInjectionDetector,
+    audit_recorder: AuditRecorder,
+    task_repository: SqliteTaskRepository,
+    unit_of_work: SqliteUnitOfWork,
+    clock: Clock,
+    id_generator: IdGenerator,
+    running_task: Task,
+    conn: sqlite3.Connection,
+) -> None:
+    """Phase 8 finding: enforce()'s violation path was three
+    independently-committed writes (violation audit, task state,
+    transition audit). Proves it's now one transaction: if the halt
+    transition's own audit write fails, the violation audit this service
+    wrote moments earlier — even though it went through a perfectly
+    healthy sink — is rolled back along with it, and the task is left
+    RUNNING rather than half-halted with a dangling violation record and
+    no explanation for why the state didn't change.
+    """
+    broken_orchestrator = Orchestrator(
+        task_repository=task_repository,
+        audit=AuditRecorder(sink=_RaisingAuditSink(), clock=clock, id_generator=id_generator),
+        clock=clock,
+        id_generator=id_generator,
+        unit_of_work=unit_of_work,
+    )
+    security_service = SecurityService(
+        gate=security_gate,
+        injection_detector=injection_detector,
+        orchestrator=broken_orchestrator,
+        audit=audit_recorder,
+        unit_of_work=unit_of_work,
+    )
+    request = ToolRequest(
+        request_id="req-1", tool="fetch", action="get", arguments={"url": "http://127.0.0.1/"}
+    )
+
+    with pytest.raises(RuntimeError, match="simulated audit sink failure"):
+        security_service.enforce(running_task, request)
+
+    row = conn.execute("SELECT state FROM tasks WHERE id = ?", (running_task.id,)).fetchone()
+    assert row["state"] == TaskState.RUNNING.value
+
+    violation_rows = conn.execute(
+        "SELECT * FROM audit_events WHERE task_id = ? AND event_type = ?",
+        (running_task.id, "security.violation"),
+    ).fetchall()
+    assert len(violation_rows) == 0

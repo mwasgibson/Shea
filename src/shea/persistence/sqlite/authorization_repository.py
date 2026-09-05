@@ -4,6 +4,8 @@ import sqlite3
 
 from shea.contracts.models import Authorization
 
+from .unit_of_work import SqliteUnitOfWork
+
 
 class SqliteAuthorizationRepository:
     """Authorizations are insert-only and listed, never upserted — a task
@@ -12,24 +14,25 @@ class SqliteAuthorizationRepository:
     fact per Appendix B: "USER OVERRIDE = EXPLICIT + AUDITABLE".
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
+        self._uow = unit_of_work
 
     def save(self, authorization: Authorization) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO authorizations (id, task_id, granted, granted_by, explicit)
-            VALUES (:id, :task_id, :granted, :granted_by, :explicit)
-            """,
-            {
-                "id": authorization.id,
-                "task_id": authorization.task_id,
-                "granted": int(authorization.granted),
-                "granted_by": authorization.granted_by,
-                "explicit": int(authorization.explicit),
-            },
-        )
-        self._conn.commit()
+        with self._uow:
+            self._conn.execute(
+                """
+                INSERT INTO authorizations (id, task_id, granted, granted_by, explicit)
+                VALUES (:id, :task_id, :granted, :granted_by, :explicit)
+                """,
+                {
+                    "id": authorization.id,
+                    "task_id": authorization.task_id,
+                    "granted": int(authorization.granted),
+                    "granted_by": authorization.granted_by,
+                    "explicit": int(authorization.explicit),
+                },
+            )
 
     def list_by_task(self, task_id: str) -> list[Authorization]:
         rows = self._conn.execute(

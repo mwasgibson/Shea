@@ -9,6 +9,7 @@ from shea.core.orchestrator import Orchestrator
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import ToolExecutionRepository, VerificationRepository
+from shea.ports.unit_of_work import UnitOfWork
 
 from .verifier import VerifierRegistry
 
@@ -67,6 +68,7 @@ class VerificationService:
         audit: AuditRecorder,
         clock: Clock,
         id_generator: IdGenerator,
+        unit_of_work: UnitOfWork,
     ) -> None:
         self._verifiers = verifier_registry
         self._orchestrator = orchestrator
@@ -75,6 +77,7 @@ class VerificationService:
         self._audit = audit
         self._clock = clock
         self._ids = id_generator
+        self._uow = unit_of_work
 
     def verify(self, task: Task) -> VerificationResult:
         if task.state is not TaskState.VERIFYING:
@@ -94,18 +97,21 @@ class VerificationService:
             method=outcome.method,
             explanation=outcome.explanation,
         )
-        self._verifications.save(verification)
+        with self._uow:
+            self._verifications.save(verification)
 
-        self._audit.record(
-            actor="verification_service",
-            component="verification.engine",
-            event_type="verification.verified" if outcome.verified else "verification.failed",
-            action="verify",
-            result="verified" if outcome.verified else "not_verified",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={"method": outcome.method, "tool": record.tool},
-        )
+            self._audit.record(
+                actor="verification_service",
+                component="verification.engine",
+                event_type=(
+                    "verification.verified" if outcome.verified else "verification.failed"
+                ),
+                action="verify",
+                result="verified" if outcome.verified else "not_verified",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"method": outcome.method, "tool": record.tool},
+            )
 
         event = "verified" if outcome.verified else "verification_failed"
         advanced_task = self._orchestrator.advance(task.id, event)

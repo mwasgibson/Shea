@@ -177,6 +177,121 @@
       eligibility iff required capabilities are a subset of available ones
 - [x] Full suite verified: 253/253 pytest, mypy --strict clean, ruff clean
 
+## Phase 8: Core Hardening (in progress)
+
+- [x] `UnsafeExecutionNotAllowedError` — `ToolExecutor` now requires an
+      explicit `allow_unsafe_execution=True` opt-in (or a real
+      `ExecutionBoundary`) before it will run a handler with no sandbox
+      at all; "nobody configured a boundary" and "explicitly configured
+      for no isolation" used to be silently the same thing
+- [x] `ExecutionService.security_service` is now a required constructor
+      parameter, not `| None = None`. Phases 1-7 made the check skippable
+      by construction — a caller could build a working `ExecutionService`
+      with no security enforcement at all and nothing would complain.
+      There is no `execute()` path that reaches a tool handler without
+      `SecurityService.enforce()` running first.
+- [x] **Wiring gap found and fixed**: `RetryController` and
+      `IdempotencyKeyGenerator` existed, were unit-tested in isolation
+      (`tests/unit/test_retry.py`, `tests/unit/test_idempotency.py`), and
+      were never called from `RecoveryService` or `ExecutionService` —
+      the same class of bug as Phase 6's `SecurityGate`/`SecurityService`
+      wiring gap, just not yet caught. Specifically:
+      - `RecoveryService.begin_recovery()` did its own linear
+        `attempt_number > self._max_attempts` check instead of asking
+        `RetryController.can_retry()`, and never called
+        `RetryController.delay_for()` at all — every recovery attempt
+        proceeded with zero backoff regardless of `RetryPolicy`.
+      - Neither service ever called `IdempotencyKeyGenerator.generate()`
+        — nothing prevented a retried tool call from duplicating a
+        non-idempotent side effect, the exact risk research doc Section
+        8.15 / Core Principle #17 name directly.
+      Fixed: `RecoveryService` now takes a `RetryController` as its
+      single source of truth for both the attempt budget and the
+      backoff delay (removed the redundant `DEFAULT_MAX_ATTEMPTS`, which
+      duplicated `RetryPolicy.max_attempts` and could have silently
+      drifted from it). The computed delay is persisted on
+      `RecoveryAttempt.delay_seconds` (migration 0006) rather than
+      computed and discarded. `ExecutionService.execute()` now computes
+      an idempotency key from (task, tool, action, arguments) before
+      every attempt and checks it via the new
+      `ToolExecutionRepository.get_by_idempotency_key()` (the SQLite
+      index for this already existed — nothing queried it); a prior
+      `SUCCESS` or `UNKNOWN` for the same key raises
+      `DuplicateExecutionSuppressedError` instead of re-invoking the
+      handler. A prior `FAILURE` is deliberately NOT suppressed, since
+      by definition no side effect is claimed to have occurred.
+- [x] Unit tests proving the fix, not just re-testing the components in
+      isolation: `test_duplicate_execution_after_unknown_outcome_is_
+      suppressed` (call-recording handler proves it fires exactly once
+      across a simulated RUNNING -> BLOCKED -> READY -> RUNNING retry),
+      `test_duplicate_suppression_does_not_apply_after_failure` (the
+      mirror property — FAILURE must NOT be suppressed),
+      `test_begin_recovery_persists_retry_controllers_delay` (fixed
+      policy, exact delay assertion), `test_begin_recovery_honors_
+      custom_retry_controllers_max_attempts` (proves `RetryController`,
+      not a hardcoded value, now governs the budget)
+- [x] Full suite verified: 294/294 pytest, mypy --strict clean, ruff clean
+- [x] **Cross-repository transactional atomicity for the highest-stakes
+      transitions**: `Orchestrator.advance()` (and `create_task()` /
+      `attach_plan()`) each wrote a Task's state and recorded its audit
+      event as two independently-committed writes — `SqliteTaskRepository.
+      save()` and `SqliteAuditSink.record()` each called `self._conn.
+      commit()` on their own. A crash between the two left a state change
+      durably persisted with no audit trail for it.
+      `SecurityService.enforce()`'s violation path was worse: three
+      independently-committed writes (violation audit, task state,
+      transition audit) — a crash partway could leave a security
+      violation on record with the task still showing RUNNING, or a
+      halted task with no transition audit for it.
+      Fixed with a new `UnitOfWork` port (`shea/ports/unit_of_work.py`)
+      and re-entrant `SqliteUnitOfWork` adapter
+      (`shea/persistence/sqlite/unit_of_work.py`): nested `with` blocks
+      share one transaction, and only the outermost one commits or rolls
+      back. `SqliteTaskRepository` and `SqliteAuditSink` now take a
+      required `unit_of_work` and wrap their own single write in it
+      (unchanged behavior for any standalone caller — still commits
+      immediately); `Orchestrator` and `SecurityService` now also take
+      `unit_of_work` and wrap their write sequences in it, so the same
+      instance nests all the writes into one transaction. Sharing that
+      one instance across all four is required, not defaulted — same
+      "make it mandatory, not optional-by-default" pattern as the
+      `security_service` fix above — since a silently-not-shared
+      `UnitOfWork` would look wired but provide no actual guarantee.
+      Proven, not just asserted: `test_advance_rolls_back_task_state_
+      when_audit_write_fails` and `test_violation_path_rolls_back_
+      everything_if_halt_transition_fails` force a failure mid-
+      transaction with a `_RaisingAuditSink` and query the DB directly to
+      confirm the earlier write was rolled back too; `test_advance_
+      success_path_still_commits_both_writes` checks the success path
+      through a **fresh connection** to rule out same-connection
+      visibility masking a real durability gap.
+      Scope note: this covers Task + Audit writes specifically (the two
+      flagged). Other repositories (recovery attempts, tool executions,
+      decisions, etc.) still self-commit independently and are NOT yet
+      part of any cross-repository atomicity guarantee — an explicitly
+      flagged remaining gap, not a silent one.
+- [x] Full suite re-verified after the atomicity fix: 297/297 pytest,
+      mypy --strict clean, ruff clean
+- [x] **CI/CD**: `.github/workflows/ci.yml` runs `pytest`, `mypy`, and
+      `ruff check .` on every push and pull request against `main`.
+      Before this, every verification claim recorded in this file and in
+      README.md depended entirely on whoever made the change actually
+      running those three commands locally — nothing stopped a
+      regression from landing silently. No matrix, no multi-OS, no
+      caching tricks: one job, Python 3.11 (the floor of `pyproject.
+      toml`'s `requires-python`), the same three commands already
+      documented everywhere else. Extend later if a real need shows up
+      (Section 16: driven by measurable requirements, not preemptively).
+- [ ] Remaining Phase 8 hardening scope, in priority order: (1)
+      cross-repository transactional atomicity — full sweep across the
+      repositories the current fix doesn't cover (recovery attempts,
+      tool executions, decisions, authorizations, risk assessments);
+      (2) audit tamper-evidence (hash-chained events); (3) authorization
+      binding to plan/step/argument hash + expiry + replay protection;
+      (4) tool schemas (argument validation). See "Not yet built" below
+      for the full list, including items deliberately excluded from
+      Phase 8 as new-subsystem work rather than hardening.
+
 ## Not yet built — explicitly flagged, not silently missing
 
 - [ ] Memory & Context management
@@ -218,8 +333,6 @@
 - [ ] Concurrency model (task scheduler, per-tool concurrency limits,
       cancellation as a real execution mechanism, backpressure)
 - [ ] Resource governance (CPU/RAM/disk/output-size/call-rate limits)
-- [ ] CI/CD (no `.github/workflows` yet — every commit should run pytest
-      + mypy --strict + ruff automatically, not on trust)
 - [ ] Full testing pyramid — unit + property exist; no integration/E2E/
       adversarial security suite yet (SSRF via IPv6, Unicode path tricks,
       sandbox escape, replay attacks, etc.)

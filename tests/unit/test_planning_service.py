@@ -12,6 +12,7 @@ from shea.model.exceptions import MalformedModelOutputError
 from shea.model.scripted import ScriptedModelProvider
 from shea.persistence.sqlite.intent_repository import SqliteIntentRepository
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.planning.exceptions import PlanValidationError
 from shea.planning.service import PlanningOutcome, PlanningService
 from shea.planning.templates import PlanTemplateRegistry, StepBlueprint
@@ -106,6 +107,7 @@ def test_model_fallback_builds_plan_when_no_template(
     tool_registry: ToolRegistry,
     intent_repository: SqliteIntentRepository,
     plan_repository: SqlitePlanRepository,
+    unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     clock: Clock,
     id_generator: IdGenerator,
@@ -144,6 +146,7 @@ def test_model_fallback_builds_plan_when_no_template(
         clock=clock,
         id_generator=id_generator,
         model_provider=scripted_model_provider,
+        unit_of_work=unit_of_work,
     )
 
     outcome = service.create_and_plan(session_id="session-1", request_text="what's the weather")

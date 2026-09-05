@@ -4,6 +4,7 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Task, ToolRequest
 from shea.core.orchestrator import Orchestrator
+from shea.ports.unit_of_work import UnitOfWork
 
 from .exceptions import SecurityViolationError
 from .gate import SecurityGate
@@ -38,6 +39,14 @@ class SecurityService:
     does not itself halt the task. Per research doc Section 11.6, the
     content is data, not authority — audit is what makes that fact
     durable, not an automatic hard stop on this component's say-so alone.
+
+    Phase 8 finding: the violation path used to be three independently-
+    committed writes (violation audit, task state, transition audit). A
+    crash midway could leave a security violation on record with the
+    task still showing RUNNING, or a halted task with no transition audit
+    for it. `unit_of_work` must be the same instance shared with
+    `orchestrator` (and its task repository/audit sink) so this actually
+    nests into one transaction rather than three.
     """
 
     def __init__(
@@ -47,11 +56,13 @@ class SecurityService:
         injection_detector: PromptInjectionDetector,
         orchestrator: Orchestrator,
         audit: AuditRecorder,
+        unit_of_work: UnitOfWork,
     ) -> None:
         self._gate = gate
         self._injection_detector = injection_detector
         self._orchestrator = orchestrator
         self._audit = audit
+        self._uow = unit_of_work
 
     def enforce(self, task: Task, request: ToolRequest) -> None:
         if task.state is not TaskState.RUNNING:
@@ -60,22 +71,23 @@ class SecurityService:
         try:
             self._gate.check_request(request)
         except SecurityViolationError as exc:
-            self._audit.record(
-                actor="security_service",
-                component="security.gate",
-                event_type="security.violation",
-                action="enforce",
-                result="blocked",
-                request_id=task.request_id,
-                task_id=task.id,
-                metadata={
-                    "tool": request.tool,
-                    "category": exc.category,
-                    "reason": exc.reason,
-                    "severity": "HIGH",
-                },
-            )
-            self._orchestrator.advance(task.id, "security_halt")
+            with self._uow:
+                self._audit.record(
+                    actor="security_service",
+                    component="security.gate",
+                    event_type="security.violation",
+                    action="enforce",
+                    result="blocked",
+                    request_id=task.request_id,
+                    task_id=task.id,
+                    metadata={
+                        "tool": request.tool,
+                        "category": exc.category,
+                        "reason": exc.reason,
+                        "severity": "HIGH",
+                    },
+                )
+                self._orchestrator.advance(task.id, "security_halt")
             raise
 
         self._audit.record(

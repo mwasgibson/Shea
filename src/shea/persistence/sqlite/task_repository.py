@@ -6,6 +6,8 @@ from datetime import datetime
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Task
 
+from .unit_of_work import SqliteUnitOfWork
+
 
 class SqliteTaskRepository:
     """Concrete adapter for the TaskRepository port (shea.ports.repositories).
@@ -14,30 +16,33 @@ class SqliteTaskRepository:
     method signatures must match exactly.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
+        self._uow = unit_of_work
 
     def save(self, task: Task) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO tasks (id, session_id, request_id, state, plan_id, created_at, updated_at)
-            VALUES (:id, :session_id, :request_id, :state, :plan_id, :created_at, :updated_at)
-            ON CONFLICT(id) DO UPDATE SET
-                state = excluded.state,
-                plan_id = excluded.plan_id,
-                updated_at = excluded.updated_at
-            """,
-            {
-                "id": task.id,
-                "session_id": task.session_id,
-                "request_id": task.request_id,
-                "state": task.state.value,
-                "plan_id": task.plan_id,
-                "created_at": task.created_at.isoformat(),
-                "updated_at": task.updated_at.isoformat(),
-            },
-        )
-        self._conn.commit()
+        with self._uow:
+            self._conn.execute(
+                """
+                INSERT INTO tasks
+                    (id, session_id, request_id, state, plan_id, created_at, updated_at)
+                VALUES
+                    (:id, :session_id, :request_id, :state, :plan_id, :created_at, :updated_at)
+                ON CONFLICT(id) DO UPDATE SET
+                    state = excluded.state,
+                    plan_id = excluded.plan_id,
+                    updated_at = excluded.updated_at
+                """,
+                {
+                    "id": task.id,
+                    "session_id": task.session_id,
+                    "request_id": task.request_id,
+                    "state": task.state.value,
+                    "plan_id": task.plan_id,
+                    "created_at": task.created_at.isoformat(),
+                    "updated_at": task.updated_at.isoformat(),
+                },
+            )
 
     def get(self, task_id: str) -> Task | None:
         row = self._conn.execute(

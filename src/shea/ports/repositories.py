@@ -98,6 +98,8 @@ class ToolExecutionRepository(Protocol):
 
     def get_latest_by_task(self, task_id: str) -> ToolExecutionRecord | None: ...
 
+    def get_by_idempotency_key(self, idempotency_key: str) -> ToolExecutionRecord | None: ...
+
 
 class VerificationRepository(Protocol):
     """Persists VerificationRecord — technical doc Section 7.2's
@@ -136,4 +138,4 @@ class RecoveryDecisionRepository(Protocol):
     def list_by_task(
         self,
         task_id: str,
-    ) -> list[RecoveryDecisionRecord]: ...    
+    ) -> list[RecoveryDecisionRecord]: ...

@@ -8,6 +8,7 @@ from shea.contracts.enums import (
 from shea.contracts.models import (
     RecoveryAttempt,
     RecoveryDecision,
+    RetryPolicy,
     Task,
 )
 from shea.core.orchestrator import Orchestrator
@@ -17,12 +18,12 @@ from shea.ports.repositories import (
     ToolExecutionRepository,
     VerificationRepository,
 )
+from shea.ports.unit_of_work import UnitOfWork
 
 from .classifier import FailureClassifier
 from .compensator import Compensator, default_compensator
 from .planner import RecoveryPlanner
-
-DEFAULT_MAX_ATTEMPTS = 3
+from .retry import RetryController
 
 
 class TaskNotFailedError(Exception):
@@ -92,10 +93,15 @@ class RecoveryService:
     plus resolution of BLOCKED tasks (Phase 3's UNKNOWN-outcome landing
     state), which otherwise has no way back out.
 
-    Retries are bounded by `max_attempts`, counted from persisted
-    RecoveryAttempt rows rather than an in-memory counter, so the limit
-    survives process restarts (technical doc Section 14: task state is
-    persistent, not RAM-only).
+    Retries are bounded by `RetryController` (backed by `RetryPolicy.
+    max_attempts`), counted from persisted RecoveryAttempt rows rather
+    than an in-memory counter, so the limit survives process restarts
+    (technical doc Section 14: task state is persistent, not RAM-only).
+    `RetryController.delay_for()` also supplies the backoff delay for
+    each attempt, which is persisted on the `RecoveryAttempt` itself
+    rather than computed and discarded — Phase 8 found this class built,
+    unit-tested, and never actually called from here; see the Phase 8
+    review for the full story.
     """
 
     def __init__(
@@ -107,9 +113,10 @@ class RecoveryService:
         verification_repository: VerificationRepository,
         audit: AuditRecorder,
         id_generator: IdGenerator,
+        unit_of_work: UnitOfWork,
         classifier: FailureClassifier | None = None,
         planner: RecoveryPlanner | None = None,
-        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        retry_controller: RetryController | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._attempts = recovery_attempt_repository
@@ -117,9 +124,10 @@ class RecoveryService:
         self._verifications = verification_repository
         self._audit = audit
         self._ids = id_generator
+        self._uow = unit_of_work
         self._classifier = classifier or FailureClassifier()
         self._planner = planner or RecoveryPlanner()
-        self._max_attempts = max_attempts
+        self._retry = retry_controller or RetryController(RetryPolicy())
 
     def plan_recovery(self, task: Task) -> RecoveryDecision:
         if task.state is not TaskState.FAILED:
@@ -167,12 +175,14 @@ class RecoveryService:
         previous_attempts = self._attempts.list_by_task(task.id)
         attempt_number = len(previous_attempts) + 1
 
-        # Enforce budget limits before planning strategies
-        if attempt_number > self._max_attempts:
+        # RetryController is the single source of truth for the attempt
+        # budget now — not a locally duplicated max_attempts field that
+        # could silently drift from RetryPolicy's own default.
+        if not self._retry.can_retry(len(previous_attempts)):
             raise RecoveryExhaustedError(
                 task.id,
                 len(previous_attempts),
-                self._max_attempts,
+                self._retry.max_attempts,
             )
 
         decision = self.plan_recovery(task)
@@ -184,30 +194,35 @@ class RecoveryService:
             raise RecoveryExhaustedError(
                 task.id,
                 len(previous_attempts),
-                self._max_attempts,
+                self._retry.max_attempts,
             )
 
-        self._attempts.save(
-            RecoveryAttempt(
-                id=self._ids.new_id(),
+        delay_seconds = self._retry.delay_for(attempt_number)
+
+        with self._uow:
+            self._attempts.save(
+                RecoveryAttempt(
+                    id=self._ids.new_id(),
+                    task_id=task.id,
+                    attempt_number=attempt_number,
+                    delay_seconds=delay_seconds,
+                )
+            )
+
+            self._audit.record(
+                actor="recovery_service",
+                component="recovery.manager",
+                event_type="recovery.attempt_started",
+                action="begin_recovery",
+                result="attempting",
+                request_id=task.request_id,
                 task_id=task.id,
-                attempt_number=attempt_number,
+                metadata={
+                    "attempt_number": attempt_number,
+                    "strategy": decision.strategy.value,
+                    "delay_seconds": delay_seconds,
+                },
             )
-        )
-
-        self._audit.record(
-            actor="recovery_service",
-            component="recovery.manager",
-            event_type="recovery.attempt_started",
-            action="begin_recovery",
-            result="attempting",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={
-                "attempt_number": attempt_number,
-                "strategy": decision.strategy.value,
-            },
-        )
 
         return self._orchestrator.advance(task.id, "retry")
 
@@ -231,29 +246,30 @@ class RecoveryService:
         attempt.method = outcome.method
         attempt.explanation = outcome.explanation
 
-        self._attempts.save(attempt)
+        with self._uow:
+            self._attempts.save(attempt)
 
-        self._audit.record(
-            actor="recovery_service",
-            component="recovery.manager",
-            event_type=(
-                "recovery.recovered"
-                if outcome.restored
-                else "recovery.failed"
-            ),
-            action="resolve_recovery",
-            result=(
-                "recovered"
-                if outcome.restored
-                else "not_recovered"
-            ),
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={
-                "attempt_number": attempt.attempt_number,
-                "method": outcome.method,
-            },
-        )
+            self._audit.record(
+                actor="recovery_service",
+                component="recovery.manager",
+                event_type=(
+                    "recovery.recovered"
+                    if outcome.restored
+                    else "recovery.failed"
+                ),
+                action="resolve_recovery",
+                result=(
+                    "recovered"
+                    if outcome.restored
+                    else "not_recovered"
+                ),
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={
+                    "attempt_number": attempt.attempt_number,
+                    "method": outcome.method,
+                },
+            )
 
         return self._orchestrator.advance(
             task.id,

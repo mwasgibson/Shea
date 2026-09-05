@@ -5,7 +5,6 @@ from .idempotency import IdempotencyKeyGenerator
 from .planner import RecoveryPlanner
 from .retry import RetryController
 from .service import (
-    DEFAULT_MAX_ATTEMPTS,
     MissingRecoveryAttemptError,
     RecoveryExhaustedError,
     RecoveryService,
@@ -24,7 +23,6 @@ __all__ = [
     "IdempotencyKeyGenerator",
     "RecoveryPlanner",
     "RetryController",
-    "DEFAULT_MAX_ATTEMPTS",
     "MissingRecoveryAttemptError",
     "RecoveryExhaustedError",
     "RecoveryService",

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
+from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
+from shea.contracts.models import AuditEvent
 from shea.core.orchestrator import Orchestrator, TaskNotFoundError
+from shea.persistence.sqlite.task_repository import SqliteTaskRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
+from shea.ports.clock import Clock
+from shea.ports.id_generator import IdGenerator
 from shea.state_machine.transitions import IllegalTransitionError
 
 
@@ -106,3 +113,74 @@ def test_cancel_from_ready_state(orchestrator: Orchestrator) -> None:
 
     with pytest.raises(IllegalTransitionError):
         orchestrator.advance(task.id, "authorize_and_run")
+
+
+class _RaisingAuditSink:
+    """Stands in for a healthy AuditSink but always fails — used to prove
+    the task-state write and the audit write in Orchestrator.advance()
+    now share one transaction (Phase 8 finding) rather than each
+    committing independently.
+    """
+
+    def record(self, event: AuditEvent) -> None:
+        raise RuntimeError("simulated audit sink failure")
+
+
+def test_advance_rolls_back_task_state_when_audit_write_fails(
+    conn: sqlite3.Connection,
+    unit_of_work: SqliteUnitOfWork,
+    task_repository: SqliteTaskRepository,
+    clock: Clock,
+    id_generator: IdGenerator,
+    orchestrator: Orchestrator,
+) -> None:
+    """Before the Phase 8 fix, `task.save()` committed on its own inside
+    `advance()` before the audit write ever ran — a failing audit sink
+    would leave the state change durably persisted with no audit record
+    for it. Proves that no longer happens: both writes share
+    `unit_of_work`, so the failed audit write rolls the task update back
+    with it, not just raises past an already-committed state change.
+    """
+    task = orchestrator.create_task(session_id="session-1", request_id="req-1")
+
+    broken_audit = AuditRecorder(sink=_RaisingAuditSink(), clock=clock, id_generator=id_generator)
+    broken_orchestrator = Orchestrator(
+        task_repository=task_repository,
+        audit=broken_audit,
+        clock=clock,
+        id_generator=id_generator,
+        unit_of_work=unit_of_work,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated audit sink failure"):
+        broken_orchestrator.advance(task.id, "start_planning")
+
+    row = conn.execute("SELECT state FROM tasks WHERE id = ?", (task.id,)).fetchone()
+    assert row["state"] == TaskState.CREATED.value
+
+
+def test_advance_success_path_still_commits_both_writes(
+    db_path: Path, orchestrator: Orchestrator
+) -> None:
+    """The mirror property: on the ordinary success path, both writes
+    are actually durable, not just pending in an open transaction that
+    happens to still be readable through the same connection.
+    """
+    task = orchestrator.create_task(session_id="session-1", request_id="req-1")
+    orchestrator.advance(task.id, "start_planning")
+
+    fresh_conn = sqlite3.connect(db_path)
+    fresh_conn.row_factory = sqlite3.Row
+    try:
+        task_row = fresh_conn.execute(
+            "SELECT state FROM tasks WHERE id = ?", (task.id,)
+        ).fetchone()
+        audit_row = fresh_conn.execute(
+            "SELECT * FROM audit_events WHERE task_id = ? AND event_type = 'task.transition'",
+            (task.id,),
+        ).fetchone()
+    finally:
+        fresh_conn.close()
+
+    assert task_row["state"] == TaskState.PLANNING.value
+    assert audit_row is not None

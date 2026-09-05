@@ -8,6 +8,8 @@ from typing import Any
 from shea.contracts.enums import ExecutionOutcome
 from shea.contracts.models import ToolExecutionRecord
 
+from .unit_of_work import SqliteUnitOfWork
+
 
 def _serialize_data(data: Any) -> str | None:
     if data is None:
@@ -27,58 +29,60 @@ class SqliteToolExecutionRepository:
     overwritten.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
+        self._uow = unit_of_work
 
     def save(self, record: ToolExecutionRecord) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO tool_executions
-                (
-                    id, task_id, tool, action, outcome, success, data, error, 
-                    attempt_number, idempotency_key, started_at, finished_at, metadata
-                )
-            VALUES
-                (
-                    :id, :task_id, :tool, :action, :outcome, :success, :data, 
-                    :error, :attempt_number, :idempotency_key, :started_at, :finished_at, :metadata
-                )
-            ON CONFLICT(id) DO UPDATE SET
-                outcome = excluded.outcome,
-                success = excluded.success,
-                data = excluded.data,
-                error = excluded.error,
-                attempt_number = excluded.attempt_number,
-                idempotency_key = excluded.idempotency_key,
-                started_at = excluded.started_at,
-                finished_at = excluded.finished_at,
-                metadata = excluded.metadata    
-            """,
-            {
-                "id": record.id,
-                "task_id": record.task_id,
-                "tool": record.tool,
-                "action": record.action,
-                "outcome": record.outcome.value,
-                "success": int(record.success),
-                "data": _serialize_data(record.data),
-                "error": record.error,
-                "attempt_number": int(record.attempt_number),
-                "idempotency_key": record.idempotency_key,
-                "started_at": (
-                    record.started_at.isoformat()
-                    if record.started_at
-                    else None
-                ),
-                "finished_at": (
-                    record.finished_at.isoformat()
-                    if record.finished_at
-                    else None
-                ),
-                "metadata": _serialize_data(record.metadata),
-            },
-        )
-        self._conn.commit()
+        with self._uow:
+            self._conn.execute(
+                """
+                INSERT INTO tool_executions
+                    (
+                        id, task_id, tool, action, outcome, success, data, error, 
+                        attempt_number, idempotency_key, started_at, finished_at, metadata
+                    )
+                VALUES
+                    (
+                        :id, :task_id, :tool, :action, :outcome, :success, :data, 
+                        :error, :attempt_number, :idempotency_key, :started_at, 
+                        :finished_at, :metadata
+                    )
+                ON CONFLICT(id) DO UPDATE SET
+                    outcome = excluded.outcome,
+                    success = excluded.success,
+                    data = excluded.data,
+                    error = excluded.error,
+                    attempt_number = excluded.attempt_number,
+                    idempotency_key = excluded.idempotency_key,
+                    started_at = excluded.started_at,
+                    finished_at = excluded.finished_at,
+                    metadata = excluded.metadata    
+                """,
+                {
+                    "id": record.id,
+                    "task_id": record.task_id,
+                    "tool": record.tool,
+                    "action": record.action,
+                    "outcome": record.outcome.value,
+                    "success": int(record.success),
+                    "data": _serialize_data(record.data),
+                    "error": record.error,
+                    "attempt_number": int(record.attempt_number),
+                    "idempotency_key": record.idempotency_key,
+                    "started_at": (
+                        record.started_at.isoformat()
+                        if record.started_at
+                        else None
+                    ),
+                    "finished_at": (
+                        record.finished_at.isoformat()
+                        if record.finished_at
+                        else None
+                    ),
+                    "metadata": _serialize_data(record.metadata),
+                },
+            )
 
     def list_by_task(self, task_id: str) -> list[ToolExecutionRecord]:
         rows = self._conn.execute(
@@ -91,6 +95,19 @@ class SqliteToolExecutionRepository:
         row = self._conn.execute(
             "SELECT * FROM tool_executions WHERE task_id = ? ORDER BY rowid DESC LIMIT 1",
             (task_id,),
+        ).fetchone()
+        return _row_to_record(row) if row is not None else None
+
+    def get_by_idempotency_key(self, idempotency_key: str) -> ToolExecutionRecord | None:
+        # Most-recent-first: if duplicate rows ever exist for the same key
+        # (e.g. records written before this lookup existed), the newest
+        # fact about that logical operation is the one worth trusting.
+        row = self._conn.execute(
+            """
+            SELECT * FROM tool_executions
+            WHERE idempotency_key = ? ORDER BY rowid DESC LIMIT 1
+            """,
+            (idempotency_key,),
         ).fetchone()
         return _row_to_record(row) if row is not None else None
 

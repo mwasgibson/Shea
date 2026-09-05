@@ -6,6 +6,8 @@ import sqlite3
 from shea.contracts.enums import RiskLevel
 from shea.contracts.models import Plan, PlanStep
 
+from .unit_of_work import SqliteUnitOfWork
+
 
 class SqlitePlanRepository:
     """Concrete adapter for the PlanRepository port.
@@ -13,52 +15,55 @@ class SqlitePlanRepository:
     `save` replaces the full set of steps for a plan (delete-then-insert)
     rather than diffing — Phase 1 plans are small and this keeps the
     adapter simple; revisit if step counts grow large enough for it to
-    matter.
+    matter. The plan row, the step deletion, and every step insert are
+    one transaction: a crash partway used to be able to leave a plan
+    with no steps, or half its old steps and none of its new ones.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
+        self._uow = unit_of_work
 
     def save(self, plan: Plan) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO plans (id, task_id, objective, assumptions, risk, result)
-            VALUES (:id, :task_id, :objective, :assumptions, :risk, :result)
-            ON CONFLICT(id) DO UPDATE SET
-                objective = excluded.objective,
-                assumptions = excluded.assumptions,
-                risk = excluded.risk,
-                result = excluded.result
-            """,
-            {
-                "id": plan.id,
-                "task_id": plan.task_id,
-                "objective": plan.objective,
-                "assumptions": json.dumps(plan.assumptions),
-                "risk": plan.risk.value if plan.risk else None,
-                "result": plan.result,
-            },
-        )
-        self._conn.execute("DELETE FROM plan_steps WHERE plan_id = ?", (plan.id,))
-        for step in plan.steps:
+        with self._uow:
             self._conn.execute(
                 """
-                INSERT INTO plan_steps
-                    (id, plan_id, step_order, description, tool, arguments, state)
-                VALUES
-                    (:id, :plan_id, :step_order, :description, :tool, :arguments, :state)
+                INSERT INTO plans (id, task_id, objective, assumptions, risk, result)
+                VALUES (:id, :task_id, :objective, :assumptions, :risk, :result)
+                ON CONFLICT(id) DO UPDATE SET
+                    objective = excluded.objective,
+                    assumptions = excluded.assumptions,
+                    risk = excluded.risk,
+                    result = excluded.result
                 """,
                 {
-                    "id": step.id,
-                    "plan_id": plan.id,
-                    "step_order": step.order,
-                    "description": step.description,
-                    "tool": step.tool,
-                    "arguments": json.dumps(step.arguments),
-                    "state": step.state,
+                    "id": plan.id,
+                    "task_id": plan.task_id,
+                    "objective": plan.objective,
+                    "assumptions": json.dumps(plan.assumptions),
+                    "risk": plan.risk.value if plan.risk else None,
+                    "result": plan.result,
                 },
             )
-        self._conn.commit()
+            self._conn.execute("DELETE FROM plan_steps WHERE plan_id = ?", (plan.id,))
+            for step in plan.steps:
+                self._conn.execute(
+                    """
+                    INSERT INTO plan_steps
+                        (id, plan_id, step_order, description, tool, arguments, state)
+                    VALUES
+                        (:id, :plan_id, :step_order, :description, :tool, :arguments, :state)
+                    """,
+                    {
+                        "id": step.id,
+                        "plan_id": plan.id,
+                        "step_order": step.order,
+                        "description": step.description,
+                        "tool": step.tool,
+                        "arguments": json.dumps(step.arguments),
+                        "state": step.state,
+                    },
+                )
 
     def get_by_task(self, task_id: str) -> Plan | None:
         plan_row = self._conn.execute(

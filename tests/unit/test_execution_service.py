@@ -8,13 +8,16 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
+from shea.decision.service import DecisionService
 from shea.execution.service import (
+    DuplicateExecutionSuppressedError,
     ExecutionService,
     MissingDecisionError,
     TaskNotRunningError,
 )
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.ports.id_generator import IdGenerator
 from shea.security.exceptions import SecurityViolationError
 from shea.security.service import SecurityService
@@ -129,6 +132,7 @@ def test_execution_without_decision_raises(
     id_generator: IdGenerator,
     tool_registry: ToolRegistry,
     security_service: SecurityService,
+    unit_of_work: SqliteUnitOfWork,
 ) -> None:
     """Structurally, only DecisionService can move a task to RUNNING, and
     it always persists a Decision first — but ExecutionService checks
@@ -149,6 +153,7 @@ def test_execution_without_decision_raises(
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
+        unit_of_work=unit_of_work,
     )
     register_echo(tool_registry)
     request = ToolRequest(request_id="req-1", tool="echo", action="do_thing")
@@ -200,11 +205,97 @@ def test_capability_denial_is_audited(
     assert rows[0]["result"] == "denied"
 
 
+def test_duplicate_execution_after_unknown_outcome_is_suppressed(
+    execution_service: ExecutionService,
+    decision_service: DecisionService,
+    orchestrator: Orchestrator,
+    running_task: Task,
+    tool_registry: ToolRegistry,
+) -> None:
+    """Phase 8 gap: IdempotencyKeyGenerator existed, was unit-tested, and
+    was never consulted by ExecutionService. Simulates the retry path a
+    real recovery loop would drive (RUNNING -> BLOCKED -> READY ->
+    RUNNING again) and proves the handler is not invoked a second time
+    for the identical (task, tool, action, arguments) — the same
+    "prove the handler was never reached" pattern used for the
+    capability-gate and security-gate tests above, applied here to
+    idempotency.
+    """
+    calls: list[ToolRequest] = []
+
+    def flaky_handler(request: ToolRequest) -> ToolResponse:
+        calls.append(request)
+        raise UnknownOutcomeError("dropped connection")
+
+    tool_registry.register(ToolDeclaration(name="flaky", capabilities=frozenset()), flaky_handler)
+    request = ToolRequest(request_id="req-1", tool="flaky", action="do_thing")
+
+    first = execution_service.execute(running_task, request)
+    assert first.task.state == TaskState.BLOCKED
+    assert len(calls) == 1
+
+    unblocked = orchestrator.advance(running_task.id, "unblock")
+    assert unblocked.state == TaskState.READY
+
+    reauthorized = decision_service.evaluate_and_authorize(
+        unblocked, capabilities=frozenset({"weather.lookup"})
+    )
+    running_again = reauthorized.task
+    assert running_again.state == TaskState.RUNNING
+
+    with pytest.raises(DuplicateExecutionSuppressedError):
+        execution_service.execute(running_again, request)
+
+    # The handler must not have fired a second time — the whole point.
+    assert len(calls) == 1
+
+
+def test_duplicate_suppression_does_not_apply_after_failure(
+    execution_service: ExecutionService,
+    decision_service: DecisionService,
+    orchestrator: Orchestrator,
+    running_task: Task,
+    tool_registry: ToolRegistry,
+) -> None:
+    """The mirror-image property: a prior FAILURE claims no side effect
+    occurred, so it must NOT be treated as a duplicate — a genuine retry
+    has to actually reach the handler again.
+    """
+    calls: list[ToolRequest] = []
+
+    def failing_handler(request: ToolRequest) -> ToolResponse:
+        calls.append(request)
+        return ToolResponse(success=False, error="deliberate failure")
+
+    tool_registry.register(
+        ToolDeclaration(name="fail", capabilities=frozenset()), failing_handler
+    )
+    request = ToolRequest(request_id="req-1", tool="fail", action="do_thing")
+
+    first = execution_service.execute(running_task, request)
+    assert first.task.state == TaskState.FAILED
+    assert len(calls) == 1
+
+    recovering = orchestrator.advance(running_task.id, "retry")
+    ready_again = orchestrator.advance(recovering.id, "recovered")
+
+    reauthorized = decision_service.evaluate_and_authorize(
+        ready_again, capabilities=frozenset({"weather.lookup"})
+    )
+    running_again = reauthorized.task
+
+    second = execution_service.execute(running_again, request)
+
+    assert second.task.state == TaskState.FAILED
+    assert len(calls) == 2  # the handler WAS invoked again — not suppressed
+
+
 def test_execution_service_with_security_service_halts_on_violation(
     tool_executor: ToolExecutor,
     orchestrator: Orchestrator,
     decision_repository: SqliteDecisionRepository,
     tool_execution_repository: SqliteToolExecutionRepository,
+    unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     id_generator: IdGenerator,
     running_task: Task,
@@ -222,6 +313,7 @@ def test_execution_service_with_security_service_halts_on_violation(
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
+        unit_of_work=unit_of_work,
     )
     request = ToolRequest(
         request_id="req-1",

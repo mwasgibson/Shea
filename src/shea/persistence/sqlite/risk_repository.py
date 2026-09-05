@@ -6,30 +6,33 @@ import sqlite3
 from shea.contracts.enums import RiskLevel
 from shea.contracts.models import RiskAssessment
 
+from .unit_of_work import SqliteUnitOfWork
+
 
 class SqliteRiskAssessmentRepository:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
+        self._uow = unit_of_work
 
     def save(self, risk_assessment: RiskAssessment) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO risk_assessments (id, task_id, level, factors, explanation)
-            VALUES (:id, :task_id, :level, :factors, :explanation)
-            ON CONFLICT(id) DO UPDATE SET
-                level = excluded.level,
-                factors = excluded.factors,
-                explanation = excluded.explanation
-            """,
-            {
-                "id": risk_assessment.id,
-                "task_id": risk_assessment.task_id,
-                "level": risk_assessment.level.value,
-                "factors": json.dumps(risk_assessment.factors),
-                "explanation": risk_assessment.explanation,
-            },
-        )
-        self._conn.commit()
+        with self._uow:
+            self._conn.execute(
+                """
+                INSERT INTO risk_assessments (id, task_id, level, factors, explanation)
+                VALUES (:id, :task_id, :level, :factors, :explanation)
+                ON CONFLICT(id) DO UPDATE SET
+                    level = excluded.level,
+                    factors = excluded.factors,
+                    explanation = excluded.explanation
+                """,
+                {
+                    "id": risk_assessment.id,
+                    "task_id": risk_assessment.task_id,
+                    "level": risk_assessment.level.value,
+                    "factors": json.dumps(risk_assessment.factors),
+                    "explanation": risk_assessment.explanation,
+                },
+            )
 
     def get_by_task(self, task_id: str) -> RiskAssessment | None:
         row = self._conn.execute(

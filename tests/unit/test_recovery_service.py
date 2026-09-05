@@ -4,11 +4,17 @@ import sqlite3
 
 import pytest
 
+from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
-from shea.contracts.models import Task
+from shea.contracts.models import RetryPolicy, Task
 from shea.core.orchestrator import Orchestrator
 from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAttemptRepository
+from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
+from shea.persistence.sqlite.verification_repository import SqliteVerificationRepository
+from shea.ports.id_generator import IdGenerator
 from shea.recovery.compensator import CompensationOutcome
+from shea.recovery.retry import RetryController
 from shea.recovery.service import (
     RecoveryExhaustedError,
     RecoveryService,
@@ -146,3 +152,76 @@ def test_recovery_attempt_is_persisted_with_resolution(
     assert attempts[0].attempt_number == 1
     assert attempts[0].resolved is True
     assert attempts[0].recovered is False
+
+
+def test_begin_recovery_persists_retry_controllers_delay(
+    orchestrator: Orchestrator,
+    recovery_attempt_repository: SqliteRecoveryAttemptRepository,
+    tool_execution_repository: SqliteToolExecutionRepository,
+    verification_repository: SqliteVerificationRepository,
+    unit_of_work: SqliteUnitOfWork,
+    audit_recorder: AuditRecorder,
+    id_generator: IdGenerator,
+    failed_task: Task,
+) -> None:
+    """Phase 8 gap: RetryController.delay_for() existed, was unit-tested,
+    and was never called from RecoveryService — every attempt proceeded
+    with zero backoff regardless of policy. Fixed backoff (no jitter) so
+    the expected delay is exact, not just "> 0".
+    """
+    policy = RetryPolicy(
+        max_attempts=3,
+        initial_delay_seconds=2.0,
+        exponential_backoff=False,
+        jitter=False,
+    )
+    service = RecoveryService(
+        orchestrator=orchestrator,
+        recovery_attempt_repository=recovery_attempt_repository,
+        tool_execution_repository=tool_execution_repository,
+        verification_repository=verification_repository,
+        audit=audit_recorder,
+        id_generator=id_generator,
+        retry_controller=RetryController(policy),
+        unit_of_work=unit_of_work,
+    )
+
+    service.begin_recovery(failed_task)
+
+    attempts = recovery_attempt_repository.list_by_task(failed_task.id)
+    assert len(attempts) == 1
+    assert attempts[0].delay_seconds == 2.0
+
+
+def test_begin_recovery_honors_custom_retry_controllers_max_attempts(
+    orchestrator: Orchestrator,
+    recovery_attempt_repository: SqliteRecoveryAttemptRepository,
+    tool_execution_repository: SqliteToolExecutionRepository,
+    verification_repository: SqliteVerificationRepository,
+    unit_of_work: SqliteUnitOfWork,
+    audit_recorder: AuditRecorder,
+    id_generator: IdGenerator,
+    failed_task: Task,
+) -> None:
+    """Proves RetryController is the actual authority for the attempt
+    budget now, not a second, independently-set max_attempts value that
+    could silently disagree with it.
+    """
+    service = RecoveryService(
+        orchestrator=orchestrator,
+        recovery_attempt_repository=recovery_attempt_repository,
+        tool_execution_repository=tool_execution_repository,
+        verification_repository=verification_repository,
+        audit=audit_recorder,
+        id_generator=id_generator,
+        retry_controller=RetryController(RetryPolicy(max_attempts=1)),
+        unit_of_work=unit_of_work,
+    )
+
+    service.begin_recovery(failed_task)
+
+    with pytest.raises(RecoveryExhaustedError) as exc_info:
+        service.begin_recovery(failed_task)
+
+    assert exc_info.value.attempts_made == 1
+    assert exc_info.value.max_attempts == 1

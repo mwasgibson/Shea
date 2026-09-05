@@ -4,37 +4,40 @@ import sqlite3
 
 from shea.contracts.models import VerificationRecord
 
+from .unit_of_work import SqliteUnitOfWork
+
 
 class SqliteVerificationRepository:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
+        self._uow = unit_of_work
 
     def save(self, record: VerificationRecord) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO verifications (
-                id, task_id, verified, method, explanation, observed_state, 
-                expected_state, confidence, side_effect_detected, retry_safe
-                )
-            VALUES (
-                :id, :task_id, :verified, :method, :explanation, :observed_state, 
-                :expected_state, :confidence, :side_effect_detected, :retry_safe
-                )
-            """,
-            {
-                "id": record.id,
-                "task_id": record.task_id,
-                "verified": int(record.verified),
-                "method": record.method,
-                "explanation": record.explanation,
-                "observed_state": record.observed_state,
-                "expected_state": record.expected_state,
-                "confidence": record.confidence,
-                "side_effect_detected": int(record.side_effect_detected),
-                "retry_safe": int(record.retry_safe),
-            },
-        )
-        self._conn.commit()
+        with self._uow:
+            self._conn.execute(
+                """
+                INSERT INTO verifications (
+                    id, task_id, verified, method, explanation, observed_state, 
+                    expected_state, confidence, side_effect_detected, retry_safe
+                    )
+                VALUES (
+                    :id, :task_id, :verified, :method, :explanation, :observed_state, 
+                    :expected_state, :confidence, :side_effect_detected, :retry_safe
+                    )
+                """,
+                {
+                    "id": record.id,
+                    "task_id": record.task_id,
+                    "verified": int(record.verified),
+                    "method": record.method,
+                    "explanation": record.explanation,
+                    "observed_state": record.observed_state,
+                    "expected_state": record.expected_state,
+                    "confidence": record.confidence,
+                    "side_effect_detected": int(record.side_effect_detected),
+                    "retry_safe": int(record.retry_safe),
+                },
+            )
 
     def list_by_task(self, task_id: str) -> list[VerificationRecord]:
         rows = self._conn.execute(

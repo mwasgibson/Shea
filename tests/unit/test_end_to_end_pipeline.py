@@ -7,9 +7,8 @@ from shea.core.orchestrator import Orchestrator
 from shea.decision.service import DecisionService
 from shea.execution.service import ExecutionService
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
-from shea.persistence.sqlite.tool_execution_repository import (
-    SqliteToolExecutionRepository,
-)
+from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.planning.capabilities import capabilities_for_plan
 from shea.planning.service import PlanningService
 from shea.planning.templates import PlanTemplateRegistry, StepBlueprint
@@ -39,6 +38,7 @@ def test_full_pipeline_from_raw_text_to_completed(
     deterministic_matcher: DeterministicIntentMatcher,
     template_registry: PlanTemplateRegistry,
     tool_registry: ToolRegistry,
+    unit_of_work: SqliteUnitOfWork,
 ) -> None:
     """The capstone test: a raw text request drives every phase built so
     far — Planning, Decision, Security, Execution, Verification — with
@@ -66,6 +66,7 @@ def test_full_pipeline_from_raw_text_to_completed(
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
+        unit_of_work=unit_of_work,
     )
 
     def weather_handler(request: ToolRequest) -> ToolResponse:
@@ -124,6 +125,7 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     orchestrator: Orchestrator,
     decision_repository: SqliteDecisionRepository,
     tool_execution_repository: SqliteToolExecutionRepository,
+    unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     id_generator: IdGenerator,
     security_service: SecurityService,
@@ -158,6 +160,7 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
+        unit_of_work=unit_of_work,
     )
 
     execution_count = 0

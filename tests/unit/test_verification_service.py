@@ -9,6 +9,7 @@ from shea.contracts.enums import TaskState
 from shea.contracts.models import Task, ToolExecutionRecord
 from shea.core.orchestrator import Orchestrator
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.persistence.sqlite.verification_repository import SqliteVerificationRepository
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
@@ -34,6 +35,7 @@ def test_custom_verifier_can_override_execution_report(
     orchestrator: Orchestrator,
     tool_execution_repository: SqliteToolExecutionRepository,
     verification_repository: SqliteVerificationRepository,
+    unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     clock: Clock,
     id_generator: IdGenerator,
@@ -61,6 +63,7 @@ def test_custom_verifier_can_override_execution_report(
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
     result = service.verify(verifying_task)
@@ -82,6 +85,7 @@ def test_verification_without_execution_record_raises(
     orchestrator: Orchestrator,
     tool_execution_repository: SqliteToolExecutionRepository,
     verification_repository: SqliteVerificationRepository,
+    unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     clock: Clock,
     id_generator: IdGenerator,
@@ -101,6 +105,7 @@ def test_verification_without_execution_record_raises(
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
     with pytest.raises(MissingExecutionRecordError):

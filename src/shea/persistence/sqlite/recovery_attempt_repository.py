@@ -4,35 +4,42 @@ import sqlite3
 
 from shea.contracts.models import RecoveryAttempt
 
+from .unit_of_work import SqliteUnitOfWork
+
 
 class SqliteRecoveryAttemptRepository:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
+        self._uow = unit_of_work
 
     def save(self, attempt: RecoveryAttempt) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO recovery_attempts
-                (id, task_id, attempt_number, resolved, recovered, method, explanation)
-            VALUES
-                (:id, :task_id, :attempt_number, :resolved, :recovered, :method, :explanation)
-            ON CONFLICT(id) DO UPDATE SET
-                resolved = excluded.resolved,
-                recovered = excluded.recovered,
-                method = excluded.method,
-                explanation = excluded.explanation
-            """,
-            {
-                "id": attempt.id,
-                "task_id": attempt.task_id,
-                "attempt_number": attempt.attempt_number,
-                "resolved": int(attempt.resolved),
-                "recovered": None if attempt.recovered is None else int(attempt.recovered),
-                "method": attempt.method,
-                "explanation": attempt.explanation,
-            },
-        )
-        self._conn.commit()
+        with self._uow:
+            self._conn.execute(
+                """
+                INSERT INTO recovery_attempts
+                    (id, task_id, attempt_number, resolved, recovered, method, explanation,
+                     delay_seconds)
+                VALUES
+                    (:id, :task_id, :attempt_number, :resolved, :recovered, :method, :explanation,
+                     :delay_seconds)
+                ON CONFLICT(id) DO UPDATE SET
+                    resolved = excluded.resolved,
+                    recovered = excluded.recovered,
+                    method = excluded.method,
+                    explanation = excluded.explanation,
+                    delay_seconds = excluded.delay_seconds
+                """,
+                {
+                    "id": attempt.id,
+                    "task_id": attempt.task_id,
+                    "attempt_number": attempt.attempt_number,
+                    "resolved": int(attempt.resolved),
+                    "recovered": None if attempt.recovered is None else int(attempt.recovered),
+                    "method": attempt.method,
+                    "explanation": attempt.explanation,
+                    "delay_seconds": float(attempt.delay_seconds),
+                },
+            )
 
     def list_by_task(self, task_id: str) -> list[RecoveryAttempt]:
         rows = self._conn.execute(
@@ -62,4 +69,5 @@ def _row_to_attempt(row: sqlite3.Row) -> RecoveryAttempt:
         recovered=None if recovered is None else bool(recovered),
         method=row["method"],
         explanation=row["explanation"],
+        delay_seconds=float(row["delay_seconds"]),
     )

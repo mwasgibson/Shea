@@ -11,6 +11,7 @@ from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.model_provider import ModelProvider
 from shea.ports.repositories import IntentRepository, PlanRepository
+from shea.ports.unit_of_work import UnitOfWork
 from shea.tools.registry import ToolRegistry
 from shea.understanding.deterministic import DeterministicIntentMatcher, IntentDraft
 from shea.understanding.exceptions import AmbiguousIntentError
@@ -115,6 +116,7 @@ class PlanningService:
         audit: AuditRecorder,
         clock: Clock,
         id_generator: IdGenerator,
+        unit_of_work: UnitOfWork,
         model_provider: ModelProvider | None = None,
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     ) -> None:
@@ -129,6 +131,7 @@ class PlanningService:
         self._audit = audit
         self._clock = clock
         self._ids = id_generator
+        self._uow = unit_of_work
         self._model = model_provider
 
     def create_and_plan(
@@ -151,9 +154,10 @@ class PlanningService:
         intent = self._persist_intent(task, draft)
         plan = self._build_and_validate_plan(task, intent, draft)
 
-        self._plans.save(plan)
-        self._orchestrator.attach_plan(task.id, plan.id)
-        ready_task = self._orchestrator.advance(task.id, "plan_ready")
+        with self._uow:
+            self._plans.save(plan)
+            self._orchestrator.attach_plan(task.id, plan.id)
+            ready_task = self._orchestrator.advance(task.id, "plan_ready")
 
         self._audit.record(
             actor="planning_service",
@@ -209,21 +213,22 @@ class PlanningService:
             source=draft.source,
             created_at=self._clock.now(),
         )
-        self._intents.save(intent)
-        self._audit.record(
-            actor="planning_service",
-            component="understanding.engine",
-            event_type="understanding.intent_parsed",
-            action="parse_intent",
-            result="success",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={
-                "type": intent.type,
-                "confidence": intent.confidence,
-                "source": intent.source,
-            },
-        )
+        with self._uow:
+            self._intents.save(intent)
+            self._audit.record(
+                actor="planning_service",
+                component="understanding.engine",
+                event_type="understanding.intent_parsed",
+                action="parse_intent",
+                result="success",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={
+                    "type": intent.type,
+                    "confidence": intent.confidence,
+                    "source": intent.source,
+                },
+            )
         return intent
 
     def _build_and_validate_plan(self, task: Task, intent: Intent, draft: IntentDraft) -> Plan:

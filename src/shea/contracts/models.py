@@ -260,6 +260,7 @@ class RecoveryAttempt:
     recovered: bool | None = None
     method: str = ""
     explanation: str = ""
+    delay_seconds: float = 0.0
     
 @dataclass(frozen=True)
 class FailureClassification:
@@ -330,4 +331,4 @@ class RecoveryDecisionRecord:
     strategy: RecoveryStrategy
     reason: str
     attempt_number: int
-    created_at: datetime    
+    created_at: datetime

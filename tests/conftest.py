@@ -27,6 +27,7 @@ from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAt
 from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentRepository
 from shea.persistence.sqlite.task_repository import SqliteTaskRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.persistence.sqlite.verification_repository import SqliteVerificationRepository
 from shea.planning.service import PlanningService
 from shea.planning.templates import PlanTemplateRegistry
@@ -98,18 +99,30 @@ def id_generator() -> SequentialIdGenerator:
 
 
 @pytest.fixture
-def task_repository(conn: sqlite3.Connection) -> SqliteTaskRepository:
-    return SqliteTaskRepository(conn)
+def unit_of_work(conn: sqlite3.Connection) -> SqliteUnitOfWork:
+    # One instance shared by task_repository, audit_sink, orchestrator,
+    # and security_service below — that sharing is what makes their
+    # writes nest into a single transaction instead of three.
+    return SqliteUnitOfWork(conn)
 
 
 @pytest.fixture
-def plan_repository(conn: sqlite3.Connection) -> SqlitePlanRepository:
-    return SqlitePlanRepository(conn)
+def task_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteTaskRepository:
+    return SqliteTaskRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
-def audit_sink(conn: sqlite3.Connection) -> SqliteAuditSink:
-    return SqliteAuditSink(conn)
+def plan_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqlitePlanRepository:
+    return SqlitePlanRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
+def audit_sink(conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork) -> SqliteAuditSink:
+    return SqliteAuditSink(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
@@ -125,12 +138,14 @@ def orchestrator(
     audit_recorder: AuditRecorder,
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
+    unit_of_work: SqliteUnitOfWork,
 ) -> Orchestrator:
     return Orchestrator(
         task_repository=task_repository,
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
 
@@ -140,18 +155,24 @@ def config_resolver() -> ConfigResolver:
 
 
 @pytest.fixture
-def risk_assessment_repository(conn: sqlite3.Connection) -> SqliteRiskAssessmentRepository:
-    return SqliteRiskAssessmentRepository(conn)
+def risk_assessment_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteRiskAssessmentRepository:
+    return SqliteRiskAssessmentRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
-def decision_repository(conn: sqlite3.Connection) -> SqliteDecisionRepository:
-    return SqliteDecisionRepository(conn)
+def decision_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteDecisionRepository:
+    return SqliteDecisionRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
-def authorization_repository(conn: sqlite3.Connection) -> SqliteAuthorizationRepository:
-    return SqliteAuthorizationRepository(conn)
+def authorization_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteAuthorizationRepository:
+    return SqliteAuthorizationRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
@@ -175,6 +196,7 @@ def decision_service(
     audit_recorder: AuditRecorder,
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
+    unit_of_work: SqliteUnitOfWork,
 ) -> DecisionService:
     return DecisionService(
         policy_engine=policy_engine,
@@ -186,6 +208,7 @@ def decision_service(
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
 
@@ -212,8 +235,10 @@ def tool_executor(tool_registry: ToolRegistry) -> ToolExecutor:
 
 
 @pytest.fixture
-def tool_execution_repository(conn: sqlite3.Connection) -> SqliteToolExecutionRepository:
-    return SqliteToolExecutionRepository(conn)
+def tool_execution_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteToolExecutionRepository:
+    return SqliteToolExecutionRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
@@ -225,6 +250,7 @@ def execution_service(
     audit_recorder: AuditRecorder,
     id_generator: SequentialIdGenerator,
     security_service: SecurityService,
+    unit_of_work: SqliteUnitOfWork,
 ) -> ExecutionService:
     return ExecutionService(
         tool_executor=tool_executor,
@@ -234,6 +260,7 @@ def execution_service(
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
+        unit_of_work=unit_of_work,
     )
 
 
@@ -253,8 +280,10 @@ def running_task(decision_service: DecisionService, ready_task: Task) -> Task:
 
 
 @pytest.fixture
-def verification_repository(conn: sqlite3.Connection) -> SqliteVerificationRepository:
-    return SqliteVerificationRepository(conn)
+def verification_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteVerificationRepository:
+    return SqliteVerificationRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
@@ -271,6 +300,7 @@ def verification_service(
     audit_recorder: AuditRecorder,
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
+    unit_of_work: SqliteUnitOfWork,
 ) -> VerificationService:
     return VerificationService(
         verifier_registry=verifier_registry,
@@ -280,12 +310,15 @@ def verification_service(
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
 
 @pytest.fixture
-def recovery_attempt_repository(conn: sqlite3.Connection) -> SqliteRecoveryAttemptRepository:
-    return SqliteRecoveryAttemptRepository(conn)
+def recovery_attempt_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteRecoveryAttemptRepository:
+    return SqliteRecoveryAttemptRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
@@ -296,6 +329,7 @@ def recovery_service(
     verification_repository: SqliteVerificationRepository,
     audit_recorder: AuditRecorder,
     id_generator: SequentialIdGenerator,
+    unit_of_work: SqliteUnitOfWork,
 ) -> RecoveryService:
     return RecoveryService(
         orchestrator=orchestrator,
@@ -304,6 +338,7 @@ def recovery_service(
         verification_repository=verification_repository,
         audit=audit_recorder,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
 
@@ -346,8 +381,10 @@ def failed_task(
 
 
 @pytest.fixture
-def intent_repository(conn: sqlite3.Connection) -> SqliteIntentRepository:
-    return SqliteIntentRepository(conn)
+def intent_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteIntentRepository:
+    return SqliteIntentRepository(conn, unit_of_work=unit_of_work)
 
 
 @pytest.fixture
@@ -376,6 +413,7 @@ def planning_service(
     audit_recorder: AuditRecorder,
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
+    unit_of_work: SqliteUnitOfWork,
 ) -> PlanningService:
     return PlanningService(
         orchestrator=orchestrator,
@@ -387,6 +425,7 @@ def planning_service(
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
 
@@ -418,10 +457,12 @@ def security_service(
     injection_detector: PromptInjectionDetector,
     orchestrator: Orchestrator,
     audit_recorder: AuditRecorder,
+    unit_of_work: SqliteUnitOfWork,
 ) -> SecurityService:
     return SecurityService(
         gate=security_gate,
         injection_detector=injection_detector,
         orchestrator=orchestrator,
         audit=audit_recorder,
+        unit_of_work=unit_of_work,
     )

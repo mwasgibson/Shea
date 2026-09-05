@@ -11,6 +11,10 @@ class RetryController:
     def __init__(self, policy: RetryPolicy | None = None) -> None:
         self._policy = policy or RetryPolicy()
 
+    @property
+    def max_attempts(self) -> int:
+        return self._policy.max_attempts
+
     def can_retry(self, attempts_made: int) -> bool:
         return attempts_made < self._policy.max_attempts
 

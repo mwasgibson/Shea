@@ -15,6 +15,7 @@ from shea.decision.service import DecisionService
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentRepository
+from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 
@@ -95,6 +96,7 @@ def denying_decision_service(
     decision_repository: SqliteDecisionRepository,
     risk_assessment_repository: SqliteRiskAssessmentRepository,
     authorization_repository: SqliteAuthorizationRepository,
+    unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     clock: Clock,
     id_generator: IdGenerator,
@@ -114,6 +116,7 @@ def denying_decision_service(
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
+        unit_of_work=unit_of_work,
     )
 
 

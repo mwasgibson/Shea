@@ -6,6 +6,7 @@ from shea.contracts.models import Task
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import TaskRepository
+from shea.ports.unit_of_work import UnitOfWork
 from shea.state_machine.transitions import IllegalTransitionError, next_state
 
 
@@ -25,6 +26,15 @@ class Orchestrator:
     be given their own ports and will call into this orchestrator, not the
     other way around, keeping `MODEL != AUTHORITY` (Appendix B) true by
     construction: nothing outside this class can move a Task's state.
+
+    Phase 8 finding: every method here writes a Task and records an audit
+    event as two independently-committed repository calls. A crash
+    between them left a state change durably persisted with no audit
+    trail for it — the write pairs below are now wrapped in `unit_of_work`
+    so they commit (or roll back) together. `unit_of_work` must be the
+    same instance given to `task_repository` and `audit`'s sink, or the
+    nesting that makes this atomic doesn't actually happen (see
+    `shea.persistence.sqlite.unit_of_work.SqliteUnitOfWork`).
     """
 
     def __init__(
@@ -33,11 +43,14 @@ class Orchestrator:
         audit: AuditRecorder,
         clock: Clock,
         id_generator: IdGenerator,
+        *,
+        unit_of_work: UnitOfWork,
     ) -> None:
         self._tasks = task_repository
         self._audit = audit
         self._clock = clock
         self._ids = id_generator
+        self._uow = unit_of_work
 
     def create_task(self, *, session_id: str, request_id: str) -> Task:
         now = self._clock.now()
@@ -49,17 +62,18 @@ class Orchestrator:
             created_at=now,
             updated_at=now,
         )
-        self._tasks.save(task)
-        self._audit.record(
-            actor="orchestrator",
-            component="core.orchestrator",
-            event_type="task.created",
-            action="create_task",
-            result="success",
-            request_id=request_id,
-            task_id=task.id,
-            metadata={"session_id": session_id},
-        )
+        with self._uow:
+            self._tasks.save(task)
+            self._audit.record(
+                actor="orchestrator",
+                component="core.orchestrator",
+                event_type="task.created",
+                action="create_task",
+                result="success",
+                request_id=request_id,
+                task_id=task.id,
+                metadata={"session_id": session_id},
+            )
         return task
 
     def get_task(self, task_id: str) -> Task:
@@ -96,18 +110,19 @@ class Orchestrator:
         from_state = task.state
         task.state = new_state
         task.updated_at = self._clock.now()
-        self._tasks.save(task)
 
-        self._audit.record(
-            actor="orchestrator",
-            component="core.orchestrator",
-            event_type="task.transition",
-            action=event,
-            result="success",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={"from_state": from_state.value, "to_state": new_state.value},
-        )
+        with self._uow:
+            self._tasks.save(task)
+            self._audit.record(
+                actor="orchestrator",
+                component="core.orchestrator",
+                event_type="task.transition",
+                action=event,
+                result="success",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"from_state": from_state.value, "to_state": new_state.value},
+            )
         return task
 
     def attach_plan(self, task_id: str, plan_id: str) -> Task:
@@ -119,15 +134,16 @@ class Orchestrator:
         """
         task = self.get_task(task_id)
         task.plan_id = plan_id
-        self._tasks.save(task)
-        self._audit.record(
-            actor="orchestrator",
-            component="core.orchestrator",
-            event_type="task.plan_attached",
-            action="attach_plan",
-            result="success",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={"plan_id": plan_id},
-        )
+        with self._uow:
+            self._tasks.save(task)
+            self._audit.record(
+                actor="orchestrator",
+                component="core.orchestrator",
+                event_type="task.plan_attached",
+                action="attach_plan",
+                result="success",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"plan_id": plan_id},
+            )
         return task
