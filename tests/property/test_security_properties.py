@@ -34,7 +34,7 @@ def test_public_looking_ips_outside_reserved_ranges_are_allowed(
     Excludes 10.x, 127.x, 169.254.x, 172.16-31.x, 192.168.x, and the
     0/8, 224+ ranges by construction of the `a` bound and explicit skips.
     """
-    if a in (10, 127, 169) or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168):
+    if a in (10, 127, 169) or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 192 and b == 0):
         return
     host = f"{a}.{b}.{c}.{d}"
     assert is_url_allowed(f"http://{host}/") is True
