@@ -16,7 +16,12 @@ from shea.execution.service import (
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
-from shea.ports.repositories import AuthorizationRepository, DecisionRepository, PlanRepository, ToolExecutionRepository
+from shea.ports.repositories import (
+    AuthorizationRepository,
+    DecisionRepository,
+    PlanRepository,
+    ToolExecutionRepository,
+)
 from shea.security.service import SecurityService
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry

@@ -5,8 +5,7 @@ import sqlite3
 from datetime import datetime
 
 from shea.audit.chain import GENESIS_PREV_HASH, hash_audit_event
-from shea.contracts.models import AuditEvent, AuditChainBreak, AuditChainVerificationResult
-
+from shea.contracts.models import AuditChainBreak, AuditChainVerificationResult, AuditEvent
 
 
 def verify_audit_chain(conn: sqlite3.Connection) -> AuditChainVerificationResult:

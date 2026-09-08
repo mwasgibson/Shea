@@ -4,7 +4,7 @@ import hashlib
 import json
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from shea.contracts.models import Plan, PlanStep
@@ -24,7 +24,7 @@ class AuthorizationBinding:
     arguments_hash: str
     expiry_seconds: int = 3600  # Default: 1 hour
     nonce: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def is_expired(self, now: datetime | None = None) -> bool:
         """Placeholder — real expiry is checked against the Authorization record's timestamp.
@@ -33,7 +33,7 @@ class AuthorizationBinding:
         temporal validity should compare ``now`` against the grant time on
         the persisted Authorization plus ``expiry_seconds``.
         """
-        _ = now or datetime.now(timezone.utc)
+        _ = now or datetime.now(UTC)
         return False
 
 

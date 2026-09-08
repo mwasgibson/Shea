@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 from shea.contracts.models import (
     Authorization,
@@ -19,6 +18,7 @@ from shea.security.binding import (
     generate_nonce,
 )
 from tests.conftest import FrozenClock
+
 
 def test_compute_hash_functions():
     """Test that hash functions produce consistent results."""
@@ -62,7 +62,9 @@ def test_nonce_generation():
     assert len(nonce1) == 32  # 16 bytes = 32 hex chars
     assert nonce1 != nonce2
 
-def test_authorization_with_binding_fields(conn: sqlite3.Connection, clock: FrozenClock, orchestrator: Orchestrator):
+def test_authorization_with_binding_fields(
+    conn: sqlite3.Connection, clock: FrozenClock, orchestrator: Orchestrator
+    ):
     """Test that authorization can be saved and loaded with binding fields."""
     uow = SqliteUnitOfWork(conn)
     repo = SqliteAuthorizationRepository(conn, unit_of_work=uow)
@@ -154,7 +156,7 @@ def test_authorization_used_check():
         task_id="task-1",
         granted=True,
         granted_by="user1",
-        used_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        used_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
     assert auth.used_at is not None

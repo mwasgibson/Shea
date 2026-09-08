@@ -9,7 +9,12 @@ from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolRe
 from shea.core.orchestrator import Orchestrator
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
-from shea.ports.repositories import AuthorizationRepository, DecisionRepository, PlanRepository, ToolExecutionRepository
+from shea.ports.repositories import (
+    AuthorizationRepository,
+    DecisionRepository,
+    PlanRepository,
+    ToolExecutionRepository,
+)
 from shea.ports.unit_of_work import UnitOfWork
 from shea.recovery.idempotency import IdempotencyKeyGenerator
 from shea.security.binding import (
