@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from shea.contracts.enums import ExecutionOutcome
 from shea.contracts.models import ToolRequest, ToolResponse
 from shea.ports.execution_boundary import ExecutionBoundary, ExecutionScope
 
 from .boundary import UnsafeExecutionBoundary
-from .registry import ToolRegistry
+from .registry import ToolDeclaration, ToolRegistry
+from .schema import ArgumentSchema, ArgumentType, ToolSchema
 
 
 class UnknownOutcomeError(Exception):
@@ -95,6 +98,7 @@ class ToolExecutor:
                 raise UnsafeExecutionNotAllowedError()
             boundary = UnsafeExecutionBoundary()
         self._boundary: ExecutionBoundary = boundary
+        self._schema_cache: dict[str, ToolSchema | None] = {}
 
     def execute(
         self,
@@ -111,6 +115,7 @@ class ToolExecutor:
             # this check fails.
             raise CapabilityNotAuthorizedError(request.tool, missing)
 
+        self._validate_arguments(request, declaration)
         handler = self._registry.get_handler(request.tool)
         effective_scope = scope or ExecutionScope()
 
@@ -132,3 +137,68 @@ class ToolExecutor:
 
         outcome = ExecutionOutcome.SUCCESS if response.success else ExecutionOutcome.FAILURE
         return ExecutionResult(response=response, outcome=outcome)
+    
+    def _validate_arguments(self, request: ToolRequest, declaration: ToolDeclaration) -> None:
+        """Validate tool arguments against the declared schema.
+
+        No schema on the declaration means no validation (tools stay open).
+        An explicit empty schema still rejects unknown arguments.
+        """
+        schema = self._get_schema(declaration)
+        if schema is None:
+            return
+        schema.get_validated_arguments(request)
+
+
+    def _get_schema(self, declaration: ToolDeclaration) -> ToolSchema | None:
+        """Get or create ToolSchema from declaration's argument_schema."""
+        if declaration.name in self._schema_cache:
+            return self._schema_cache[declaration.name]
+
+        declared_schema = declaration.argument_schema
+
+        # No schema declared → skip validation entirely
+        if declared_schema is None:
+            self._schema_cache[declaration.name] = None  # type: ignore[assignment]
+            # Better: use a separate cache or don't cache None; simplest:
+            return None
+
+        if isinstance(declared_schema, ToolSchema):
+            schema = declared_schema
+        else:
+            arguments: dict[str, ArgumentSchema] = {
+                arg_name: self._parse_argument_schema(arg_name, arg_def)
+                for arg_name, arg_def in declared_schema.items()
+            }
+            schema = ToolSchema(
+                name=declaration.name,
+                description=declaration.description,
+                arguments=arguments,
+                required_capabilities=declaration.capabilities,
+                baseline_risk=declaration.baseline_risk.value,
+                isolation_required=declaration.isolation_required,
+                audit_required=declaration.audit_required,
+        )
+
+        self._schema_cache[declaration.name] = schema
+        return schema
+
+    def _parse_argument_schema(
+        self, name: str, arg_def: Mapping[str, Any]
+    ) -> ArgumentSchema:
+        """Parse a dictionary argument definition into an ArgumentSchema."""
+        arg_type = ArgumentType(str(arg_def.get("type", "any")).lower())
+
+        return ArgumentSchema(
+            name=name,
+            type=arg_type,
+            description=str(arg_def.get("description", "")),
+            required=bool(arg_def.get("required", True)),
+            default=arg_def.get("default"),
+            min_value=arg_def.get("min_value"),
+            max_value=arg_def.get("max_value"),
+            min_length=arg_def.get("min_length"),
+            max_length=arg_def.get("max_length"),
+            pattern=arg_def.get("pattern"),
+            enum=arg_def.get("enum"),
+        )

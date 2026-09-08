@@ -1,4 +1,5 @@
 from .service import (
+    DuplicateExecutionSuppressedError,
     ExecutionOutcomeRecord,
     ExecutionService,
     MissingDecisionError,
@@ -6,6 +7,7 @@ from .service import (
 )
 
 __all__ = [
+    "DuplicateExecutionSuppressedError",
     "ExecutionOutcomeRecord",
     "ExecutionService",
     "MissingDecisionError",

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from shea.contracts.enums import RiskLevel
 from shea.contracts.models import ToolRequest, ToolResponse
+from shea.tools.schema import ToolSchema
 
 ToolHandler = Callable[[ToolRequest], ToolResponse]
 
@@ -28,6 +30,7 @@ class ToolDeclaration:
     isolation_required: bool = True
     audit_required: bool = True
     description: str = field(default="")
+    argument_schema: ToolSchema | Mapping[str, Mapping[str, Any]] | None = None
 
 
 class ToolNotFoundError(Exception):
@@ -74,3 +77,31 @@ class ToolRegistry:
 
     def list_tools(self) -> list[ToolDeclaration]:
         return [declaration for declaration, _ in self._tools.values()]
+    
+    def register_with_schema(
+        self,
+        name: str,
+        capabilities: frozenset[str],
+        handler: ToolHandler,
+        *,
+        description: str = "",
+        baseline_risk: RiskLevel = RiskLevel.UNKNOWN,
+        isolation_required: bool = True,
+        audit_required: bool = True,
+        argument_schema: ToolSchema | Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> None:
+        """Register a tool with a full declaration including argument schema.
+
+        This is a convenience method for the common case of registering a tool
+        with all its properties at once.
+        """
+        declaration = ToolDeclaration(
+            name=name,
+            capabilities=capabilities,
+            baseline_risk=baseline_risk,
+            isolation_required=isolation_required,
+            audit_required=audit_required,
+            description=description,
+            argument_schema=argument_schema,
+        )
+        self.register(declaration, handler)

@@ -13,6 +13,16 @@ from .registry import (
     ToolNotFoundError,
     ToolRegistry,
 )
+from .schema import (
+    ArgumentSchema,
+    ArgumentType,
+    ToolSchema,
+    ToolSchemaValidationError,
+    boolean_arg,
+    enum_arg,
+    integer_arg,
+    string_arg,
+)
 
 __all__ = [
     "UnsafeExecutionBoundary",
@@ -26,4 +36,12 @@ __all__ = [
     "ToolHandler",
     "ToolNotFoundError",
     "ToolRegistry",
+    "ArgumentSchema",
+    "ArgumentType",
+    "ToolSchema",
+    "ToolSchemaValidationError",
+    "boolean_arg",
+    "enum_arg",
+    "integer_arg",
+    "string_arg",
 ]

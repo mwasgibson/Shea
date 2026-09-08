@@ -10,11 +10,13 @@ from .repositories import (
     IntentRepository,
     PlanRepository,
     RecoveryAttemptRepository,
+    RecoveryDecisionRepository,
     RiskAssessmentRepository,
     TaskRepository,
     ToolExecutionRepository,
     VerificationRepository,
 )
+from .unit_of_work import UnitOfWork
 
 __all__ = [
     "Clock",
@@ -31,7 +33,9 @@ __all__ = [
     "PlanRepository",
     "RecoveryAttemptRepository",
     "RiskAssessmentRepository",
+    "RecoveryDecisionRepository",
     "TaskRepository",
     "ToolExecutionRepository",
     "VerificationRepository",
+    "UnitOfWork",
 ]

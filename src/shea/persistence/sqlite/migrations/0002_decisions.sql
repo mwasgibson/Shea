@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS decisions (
     risk                            TEXT NOT NULL,
     requires_authorization          INTEGER NOT NULL,
     requires_explicit_acknowledgement INTEGER NOT NULL DEFAULT 0,
-    override                        INTEGER NOT NULL DEFAULT 0
+    override                        INTEGER NOT NULL DEFAULT 0,
+    capabilities                    TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_task_id ON decisions(task_id);

@@ -1,3 +1,10 @@
+from .binding import (
+    AuthorizationBinding,
+    compute_arguments_hash,
+    compute_hash,
+    compute_plan_hash,
+    compute_step_hash,
+)
 from .exceptions import SecurityViolationError
 from .filesystem_policy import FilesystemPolicy, is_path_allowed
 from .gate import SecurityGate
@@ -8,6 +15,11 @@ from .secrets import DEFAULT_SECRET_PATTERNS, REDACTED, SecretRedactor
 from .service import SecurityService, TaskNotRunningForSecurityCheckError
 
 __all__ = [
+    "AuthorizationBinding",
+    "compute_arguments_hash",
+    "compute_hash",
+    "compute_plan_hash",
+    "compute_step_hash",
     "SecurityViolationError",
     "FilesystemPolicy",
     "is_path_allowed",

@@ -7,6 +7,8 @@ from .enums import (
     TaskState,
 )
 from .models import (
+    AuditChainBreak,
+    AuditChainVerificationResult,
     AuditEvent,
     Authorization,
     Decision,
@@ -37,6 +39,8 @@ __all__ = [
     "RecoveryStrategy",
     "RiskLevel",
     "TaskState",
+    "AuditChainBreak",
+    "AuditChainVerificationResult",
     "AuditEvent",
     "Authorization",
     "Decision",
