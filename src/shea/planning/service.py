@@ -155,20 +155,20 @@ class PlanningService:
         plan = self._build_and_validate_plan(task, intent, draft)
 
         with self._uow:
+            self._intents.save(intent)
             self._plans.save(plan)
             self._orchestrator.attach_plan(task.id, plan.id)
             ready_task = self._orchestrator.advance(task.id, "plan_ready")
-
-        self._audit.record(
-            actor="planning_service",
-            component="planning.engine",
-            event_type="planning.plan_ready",
-            action="create_and_plan",
-            result="success",
-            request_id=request.request_id,
-            task_id=task.id,
-            metadata={"plan_id": plan.id, "step_count": len(plan.steps)},
-        )
+            self._audit.record(
+                actor="planning_service",
+                component="planning.engine",
+                event_type="planning.plan_ready",
+                action="create_and_plan",
+                result="success",
+                request_id=request.request_id,
+                task_id=task.id,
+                metadata={"plan_id": plan.id, "step_count": len(plan.steps)},
+            )
 
         return PlanningOutcome(task=ready_task, intent=intent, plan=plan)
 
@@ -213,22 +213,8 @@ class PlanningService:
             source=draft.source,
             created_at=self._clock.now(),
         )
-        with self._uow:
-            self._intents.save(intent)
-            self._audit.record(
-                actor="planning_service",
-                component="understanding.engine",
-                event_type="understanding.intent_parsed",
-                action="parse_intent",
-                result="success",
-                request_id=task.request_id,
-                task_id=task.id,
-                metadata={
-                    "type": intent.type,
-                    "confidence": intent.confidence,
-                    "source": intent.source,
-                },
-            )
+        # Intent save and its audit record are wrapped in _uow by the caller
+        # (create_and_plan) to be part of the larger transaction
         return intent
 
     def _build_and_validate_plan(self, task: Task, intent: Intent, draft: IntentDraft) -> Plan:

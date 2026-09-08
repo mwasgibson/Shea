@@ -172,6 +172,7 @@ class RecoveryService:
         return decision
 
     def begin_recovery(self, task: Task) -> Task:
+        task = self._orchestrator.get_task(task.id)
         previous_attempts = self._attempts.list_by_task(task.id)
         attempt_number = len(previous_attempts) + 1
 
@@ -179,12 +180,17 @@ class RecoveryService:
         # budget now — not a locally duplicated max_attempts field that
         # could silently drift from RetryPolicy's own default.
         if not self._retry.can_retry(len(previous_attempts)):
+            if task.state == TaskState.RECOVERING:
+                self._orchestrator.advance(task.id, "recovery_failed")
             raise RecoveryExhaustedError(
                 task.id,
                 len(previous_attempts),
                 self._retry.max_attempts,
             )
-
+            
+        if task.state is not TaskState.FAILED:
+                    raise TaskNotFailedError(task.id, task.state)    
+        
         decision = self.plan_recovery(task)
 
         if decision.strategy is RecoveryStrategy.SECURITY_HALT:
@@ -200,29 +206,29 @@ class RecoveryService:
         delay_seconds = self._retry.delay_for(attempt_number)
 
         with self._uow:
-            self._attempts.save(
-                RecoveryAttempt(
-                    id=self._ids.new_id(),
-                    task_id=task.id,
-                    attempt_number=attempt_number,
-                    delay_seconds=delay_seconds,
+                self._attempts.save(
+                    RecoveryAttempt(
+                        id=self._ids.new_id(),
+                        task_id=task.id,
+                        attempt_number=attempt_number,
+                        delay_seconds=delay_seconds,
+                    )
                 )
-            )
 
-            self._audit.record(
-                actor="recovery_service",
-                component="recovery.manager",
-                event_type="recovery.attempt_started",
-                action="begin_recovery",
-                result="attempting",
-                request_id=task.request_id,
-                task_id=task.id,
-                metadata={
-                    "attempt_number": attempt_number,
-                    "strategy": decision.strategy.value,
-                    "delay_seconds": delay_seconds,
-                },
-            )
+                self._audit.record(
+                    actor="recovery_service",
+                    component="recovery.manager",
+                    event_type="recovery.attempt_started",
+                    action="begin_recovery",
+                    result="attempting",
+                    request_id=task.request_id,
+                    task_id=task.id,
+                    metadata={
+                        "attempt_number": attempt_number,
+                        "strategy": decision.strategy.value,
+                        "delay_seconds": delay_seconds,
+                    },
+                )
 
         return self._orchestrator.advance(task.id, "retry")
 
@@ -271,10 +277,12 @@ class RecoveryService:
                 },
             )
 
-        return self._orchestrator.advance(
-            task.id,
-            "recovered" if outcome.restored else "recovery_failed",
-        )
+            advanced_task = self._orchestrator.advance(
+                task.id,
+                "recovered" if outcome.restored else "recovery_failed",
+            )
+
+        return advanced_task
 
     def resolve_blocked(self, task: Task, *, resume: bool) -> Task:
         """Resolve a BLOCKED task, regardless of why it was blocked (a

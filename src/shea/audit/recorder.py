@@ -10,23 +10,6 @@ from shea.ports.repositories import AuditSink
 
 
 class AuditRecorder:
-    """Every subsystem should have nothing to do to get audited except
-    call `record()` here — event_id/timestamp generation is centralized
-    so no call site can produce a malformed or unstamped AuditEvent.
-
-    Built now, in Phase 1, before there's anything risky to audit yet, so
-    later subsystems (Decision, Execution, Security) inherit a working
-    audit path instead of bolting one on after the fact.
-
-    `redactor` is optional and defaults to None (pass-through) so every
-    existing call site keeps working unchanged. Wiring in a real
-    `Redactor` (e.g. shea.security.secrets.SecretRedactor) is the
-    concrete enforcement of technical doc Section 10.5: secrets must be
-    "excluded from normal audit logs" and "redacted from errors and
-    telemetry" — applied here, once, rather than requiring every call
-    site to remember to redact its own metadata.
-    """
-
     def __init__(
         self,
         sink: AuditSink,
@@ -50,6 +33,9 @@ class AuditRecorder:
         request_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        sequence_number: int | None = None,
+        prev_hash: str | None = None,
+        event_hash: str | None = None,
     ) -> AuditEvent:
         safe_metadata = metadata or {}
         if self._redactor is not None:
@@ -66,6 +52,10 @@ class AuditRecorder:
             action=action,
             result=result,
             metadata=safe_metadata,
+            sequence_number=sequence_number if sequence_number is not None else 0,
+            prev_hash=prev_hash,
+            event_hash=event_hash,
         )
+        # Delegate persistence, hashing, and sequence numbering completely to sink
         self._sink.record(event)
         return event

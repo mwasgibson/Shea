@@ -18,6 +18,7 @@ from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentReposito
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
+from tests.unit.test_orchestrator import _RaisingAuditSink  # pyright: ignore[reportPrivateUsage]​
 
 
 def test_safe_action_auto_authorizes_and_advances_task(
@@ -64,7 +65,7 @@ def test_high_risk_without_ack_blocks_and_does_not_advance_task(
         )
 
     assert exc_info.value.decision.risk.value == "HIGH"
-    # Task must remain exactly where it was — no partial advancement.
+    # Task must remain exactly where it was  no partial advancement.
     unchanged = orchestrator.get_task(ready_task.id)
     assert unchanged.state == TaskState.READY
 
@@ -72,7 +73,7 @@ def test_high_risk_without_ack_blocks_and_does_not_advance_task(
 def test_high_risk_with_explicit_ack_proceeds_and_advances_task(
     decision_service: DecisionService, ready_task: Task
 ) -> None:
-    """WARNING != DENIAL (Appendix B): a HIGH-risk action is not vetoed —
+    """WARNING != DENIAL (Appendix B): a HIGH-risk action is not vetoed 
     an explicit user acknowledgement unblocks it.
     """
     outcome = decision_service.evaluate_and_authorize(
@@ -102,7 +103,7 @@ def denying_decision_service(
     id_generator: IdGenerator,
 ) -> DecisionService:
     """Same wiring as the `decision_service` fixture, but with a policy
-    engine that explicitly denies `credential.access` — used to test the
+    engine that explicitly denies `credential.access`  used to test the
     non-negotiable DENIED tier without touching the default fixture that
     every other test relies on.
     """
@@ -133,7 +134,7 @@ def test_policy_denied_capability_blocks_even_with_explicit_ack(
         denying_decision_service.evaluate_and_authorize(
             ready_task,
             capabilities=frozenset({"credential.access"}),
-            explicit_user_ack=True,  # deliberately try to override — must not work
+            explicit_user_ack=True,  # deliberately try to override  must not work
         )
 
     unchanged = orchestrator.get_task(ready_task.id)
@@ -219,3 +220,55 @@ def test_decision_and_risk_assessment_are_persisted(
     assert stored_risk is not None
     assert stored_risk.level.value == "HIGH"
     assert len(stored_risk.factors) == 3
+
+
+def test_decision_service_transaction_rolls_back_on_audit_failure(
+    decision_service: DecisionService,
+    ready_task: Task,
+    conn: sqlite3.Connection,
+    audit_recorder: AuditRecorder,
+    unit_of_work: SqliteUnitOfWork,
+    decision_repository: SqliteDecisionRepository,
+    risk_assessment_repository: SqliteRiskAssessmentRepository,
+    authorization_repository: SqliteAuthorizationRepository,
+    clock: Clock,
+    id_generator: IdGenerator,
+    orchestrator: Orchestrator,
+) -> None:
+    """Phase 8: DecisionService now wraps risk_assessment, decision,
+    authorization, and task advancement in one transaction. Proves that
+    if the audit write fails mid-transaction, all the repository writes
+    are rolled back too - no inconsistent persistence between decision
+    facts and their audit trail.
+    """
+    from shea.audit.recorder import AuditRecorder as AR
+
+    broken_audit = AR(
+        sink=_RaisingAuditSink(), clock=clock, id_generator=id_generator
+    )
+    broken_decision_service = DecisionService(
+        policy_engine=PolicyEngine(),
+        risk_engine=RiskEngine(),
+        orchestrator=orchestrator,
+        decision_repository=decision_repository,
+        risk_repository=risk_assessment_repository,
+        authorization_repository=authorization_repository,
+        audit=broken_audit,
+        clock=clock,
+        id_generator=id_generator,
+        unit_of_work=unit_of_work,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated audit sink failure"):
+        broken_decision_service.evaluate_and_authorize(
+            ready_task, capabilities=frozenset({"weather.lookup"})
+        )
+
+    # All repository writes must have been rolled back
+    assert decision_repository.get_by_task(ready_task.id) is None
+    assert risk_assessment_repository.get_by_task(ready_task.id) is None
+    assert len(authorization_repository.list_by_task(ready_task.id)) == 0
+
+    # Task state must also remain unchanged (no advance happened)
+    unchanged = orchestrator.get_task(ready_task.id)
+    assert unchanged.state == TaskState.READY

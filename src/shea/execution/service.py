@@ -224,13 +224,32 @@ class ExecutionService:
                         idempotency_key=idempotency_key,
                     )
                 )
-            failed_task = self._orchestrator.advance(task.id, "execution_failed")
-            return ExecutionOutcomeRecord(
-                response=ToolResponse(success=False, error=str(exc)),
-                outcome=ExecutionOutcome.FAILURE,
-                task=failed_task,
-            )
-
+            raise
+        except TimeoutError as exc:
+            with self._uow:
+                self._audit.record(
+                    actor="execution_service",
+                    component="execution.tool",
+                    event_type="execution.timeout",
+                    action=request.action,
+                    result="timeout",
+                    request_id=task.request_id,
+                    task_id=task.id,
+                    metadata={"tool": request.tool},
+                )
+                self._tool_executions.save(
+                    ToolExecutionRecord(
+                        id=self._ids.new_id(),
+                        task_id=task.id,
+                        tool=request.tool,
+                        action=request.action,
+                        outcome=ExecutionOutcome.UNKNOWN,
+                        success=False,
+                        error=str(exc),
+                        idempotency_key=idempotency_key,
+                    )
+                )
+            raise
         with self._uow:
             self._tool_executions.save(
                 ToolExecutionRecord(
@@ -257,8 +276,8 @@ class ExecutionService:
                 metadata={"tool": request.tool, "success": result.response.success},
             )
 
-        event = _ADVANCE_EVENT_BY_OUTCOME[result.outcome]
-        advanced_task = self._orchestrator.advance(task.id, event)
+            event = _ADVANCE_EVENT_BY_OUTCOME[result.outcome]
+            advanced_task = self._orchestrator.advance(task.id, event)
 
         return ExecutionOutcomeRecord(
             response=result.response, outcome=result.outcome, task=advanced_task

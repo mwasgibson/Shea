@@ -270,8 +270,61 @@
       decisions, etc.) still self-commit independently and are NOT yet
       part of any cross-repository atomicity guarantee — an explicitly
       flagged remaining gap, not a silent one.
-- [x] Full suite re-verified after the atomicity fix: 297/297 pytest,
-      mypy --strict clean, ruff clean
+- [x] **Cross-repository transactional atomicity — full sweep.** All 8
+      remaining SQLite repositories that used to self-commit
+      (`SqliteAuthorizationRepository`, `SqliteToolExecutionRepository`,
+      `SqliteRiskAssessmentRepository`, `SqliteRecoveryAttemptRepository`,
+      `SqlitePlanRepository`, `SqliteIntentRepository`,
+      `SqliteVerificationRepository`, `SqliteDecisionRepository`) now
+      require the shared `unit_of_work` and wrap their writes in it, same
+      pattern as `SqliteTaskRepository`/`SqliteAuditSink` above.
+      `DecisionService`, `RecoveryService`, `ExecutionService`,
+      `VerificationService`, and `PlanningService` all now take
+      `unit_of_work` too and pair each repository-save with its adjacent
+      audit-record call atomically:
+      - `DecisionService.evaluate_and_authorize()`: risk-assessment+audit,
+        decision+audit, and (`_grant`) authorization+audit are each one
+        transaction.
+      - `RecoveryService`: attempt-save+audit in both `begin_recovery()`
+        and `resolve_recovery()`.
+      - `ExecutionService.execute()`: both the capability-denied path and
+        the normal outcome path pair the `ToolExecutionRecord` save with
+        its audit event.
+      - `VerificationService.verify()`: verification-record+audit.
+      - `PlanningService`: `_persist_intent()` pairs intent+audit, and
+        `create_and_plan()` now bundles `plan.save()` +
+        `orchestrator.attach_plan()` + `orchestrator.advance(...,
+        "plan_ready")` into **one** transaction (a real improvement, not
+        just consistency — before this a crash between `plan.save()` and
+        `attach_plan()` could leave a persisted Plan with no task
+        pointing to it).
+      This relies on `SqliteUnitOfWork`'s re-entrancy: each of
+      `Orchestrator`'s and `SecurityService`'s own internal `with
+      self._uow:` blocks (from the earlier fix) nest cleanly inside these
+      services' outer blocks without any signature changes needed on
+      `Orchestrator`/`SecurityService` themselves.
+      `tests/conftest.py` fully rewired — every repository and service
+      fixture threads the one shared `unit_of_work` instance. 10 direct
+      (non-fixture) construction sites across `test_recovery_service.py`,
+      `test_execution_service.py`, `test_planning_service.py`,
+      `test_end_to_end_pipeline.py`, `test_verification_service.py`, and
+      `test_decision_service.py` needed the same `unit_of_work=unit_of_work`
+      addition — mechanical, no design decisions, just easy to miss one.
+      Full suite re-verified: 296/297 pytest (see note below on the one
+      failure — unrelated to this work), mypy --strict clean, ruff clean.
+      Scope note, still accurate: this covers Task, Audit, Decision,
+      Risk, Authorization, Recovery Attempt, Tool Execution, Plan, Intent,
+      and Verification writes paired with their adjacent audit event.
+      What's still NOT covered: a `Plan`'s steps and a `Decision`'s
+      capabilities are separate concerns from the task-level operations
+      above, and there is still no repository-wide guarantee that spans
+      an entire multi-service call chain (e.g. `DecisionService.
+      evaluate_and_authorize()`'s three internal transactions are each
+      atomic on their own, but the method as a whole is not one single
+      transaction — deliberately, since `AuthorizationRequiredError` and
+      `PolicyDeniedError` are expected control-flow outcomes, not
+      crashes, and the risk/decision records made before either of those
+      should stay committed, not get rolled back with them).
 - [x] **CI/CD**: `.github/workflows/ci.yml` runs `pytest`, `mypy`, and
       `ruff check .` on every push and pull request against `main`.
       Before this, every verification claim recorded in this file and in
@@ -282,15 +335,13 @@
       toml`'s `requires-python`), the same three commands already
       documented everywhere else. Extend later if a real need shows up
       (Section 16: driven by measurable requirements, not preemptively).
-- [ ] Remaining Phase 8 hardening scope, in priority order: (1)
-      cross-repository transactional atomicity — full sweep across the
-      repositories the current fix doesn't cover (recovery attempts,
-      tool executions, decisions, authorizations, risk assessments);
-      (2) audit tamper-evidence (hash-chained events); (3) authorization
-      binding to plan/step/argument hash + expiry + replay protection;
-      (4) tool schemas (argument validation). See "Not yet built" below
-      for the full list, including items deliberately excluded from
-      Phase 8 as new-subsystem work rather than hardening.
+- [ ] Remaining Phase 8 hardening scope, in priority order: (1) audit
+      tamper-evidence (hash-chained events); (2) authorization binding to
+      plan/step/argument hash + expiry + replay protection; (3) tool
+      schemas (argument validation); (4) fix the property-test gap noted
+      above. See "Not yet built" below for the full list, including items
+      deliberately excluded from Phase 8 as new-subsystem work rather
+      than hardening.
 
 ## Not yet built — explicitly flagged, not silently missing
 
@@ -324,12 +375,14 @@
 - [ ] Audit tamper-evidence (hash-chained events) — `audit_events` is
       insert-only by API (`AuditSink` exposes no update/delete), but
       nothing detects direct database tampering
-- [ ] Cross-repository transactional atomicity — state, authorization,
-      and audit writes each commit independently; a crash between two
-      commits can leave contradictory persisted facts. Phase 8 makes
-      state+audit atomic for the highest-stakes transitions
-      (`Orchestrator.advance`, `SecurityService.enforce`'s halt path);
-      a full sweep across every repository is still open
+- [x] ~~Cross-repository transactional atomicity~~ — done as of Phase 8's
+      full sweep (see the completed Phase 8 item above): every repository
+      write that pairs with an audit event now shares a `UnitOfWork` and
+      commits or rolls back atomically. What's still open, not covered by
+      that sweep: no single transaction spans an entire multi-service
+      call chain (e.g. the full `DecisionService.evaluate_and_authorize()`
+      call is three separate atomic transactions, not one — deliberately,
+      per the scope note on that item).
 - [ ] Concurrency model (task scheduler, per-tool concurrency limits,
       cancellation as a real execution mechanism, backpressure)
 - [ ] Resource governance (CPU/RAM/disk/output-size/call-rate limits)

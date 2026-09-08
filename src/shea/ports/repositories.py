@@ -83,7 +83,7 @@ class AuditSink(Protocol):
     rather than a matter of discipline.
     """
 
-    def record(self, event: AuditEvent) -> None: ...
+    def record(self, event: AuditEvent) ->AuditEvent | None: ...
 
 
 class ToolExecutionRepository(Protocol):

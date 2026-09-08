@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ipaddress
+
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -29,14 +31,32 @@ def test_private_and_link_local_ip_literals_are_always_blocked(host: str) -> Non
 def test_public_looking_ips_outside_reserved_ranges_are_allowed(
     a: int, b: int, c: int, d: int
 ) -> None:
-    """Sanity check in the other direction: addresses outside the
-    reserved/private ranges are not blocked by block_private_networks.
-    Excludes 10.x, 127.x, 169.254.x, 172.16-31.x, 192.168.x, and the
-    0/8, 224+ ranges by construction of the `a` bound and explicit skips.
+    """Sanity check in the other direction: addresses outside every
+    IANA special-use range are not blocked by `block_private_networks`.
+
+    Previously hand-maintained a partial exclusion list (10.x, 127.x,
+    169.254.x, 172.16-31.x, 192.168.x) that Hypothesis eventually found a
+    gap in: 192.0.0.0/24 (IETF Protocol Assignments, RFC 6890) is a real
+    special-use range that `_is_blocked_ip_literal` correctly blocks, but
+    the old list never excluded it, so the property assertion itself was
+    wrong. There are several more such ranges (100.64.0.0/10, 192.0.2.0/24,
+    198.18.0.0/15, 203.0.113.0/24, and others) that a hand-maintained list
+    would need to track and could drift from again. Deriving the skip
+    condition from `ipaddress` directly — the same classification
+    `_is_blocked_ip_literal` itself uses — means this test can't drift out
+    of sync with what the policy actually blocks.
     """
-    if a in (10, 127, 169) or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 192 and b == 0):
-        return
     host = f"{a}.{b}.{c}.{d}"
+    address = ipaddress.ip_address(host)
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    ):
+        return
     assert is_url_allowed(f"http://{host}/") is True
 
 

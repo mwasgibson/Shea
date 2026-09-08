@@ -68,6 +68,12 @@ class DecisionService:
               |
               v
         Orchestrator.advance(task_id, "authorize_and_run")
+
+    Phase 8 finding: risk_assessment, decision, authorization, and the
+    authorize_and_run transition were each persisted with separate
+    `with self._uow:` blocks. A crash between any two left facts
+    inconsistently persisted. Now all four are in one transaction block
+    so they commit or roll back together.
     """
 
     def __init__(
@@ -108,16 +114,17 @@ class DecisionService:
         verdict = self._policy.evaluate(capabilities)
 
         if verdict is PolicyVerdict.DENIED:
-            self._audit.record(
-                actor="decision_service",
-                component="decision.policy",
-                event_type="decision.policy_denied",
-                action="evaluate",
-                result="denied",
-                request_id=task.request_id,
-                task_id=task.id,
-                metadata={"capabilities": sorted(capabilities)},
-            )
+            with self._uow:
+                self._audit.record(
+                    actor="decision_service",
+                    component="decision.policy",
+                    event_type="decision.policy_denied",
+                    action="evaluate",
+                    result="denied",
+                    request_id=task.request_id,
+                    task_id=task.id,
+                    metadata={"capabilities": sorted(capabilities)},
+                )
             raise PolicyDeniedError(task.id, capabilities & self._policy.deny_capabilities)
 
         risk_result = self._risk.assess(
@@ -134,18 +141,6 @@ class DecisionService:
             factors=risk_result.factors,
             explanation=risk_result.explanation,
         )
-        with self._uow:
-            self._risk_assessments.save(risk_assessment)
-            self._audit.record(
-                actor="decision_service",
-                component="decision.risk",
-                event_type="decision.risk_assessed",
-                action="assess",
-                result="success",
-                request_id=task.request_id,
-                task_id=task.id,
-                metadata={"level": risk_result.level.value, "factors": risk_result.factors},
-            )
 
         rule = confirmation_rule_for(risk_result.level)
         requires_authorization = rule.requires_authorization or (
@@ -161,8 +156,29 @@ class DecisionService:
             requires_explicit_acknowledgement=rule.requires_explicit_acknowledgement,
             capabilities=sorted(capabilities),
         )
+
+        authorization = self._resolve_authorization(
+            task=task,
+            decision=decision,
+            risk_assessment=risk_assessment,
+            explicit_user_ack=explicit_user_ack,
+            acting_user=acting_user,
+        )
+
         with self._uow:
+            self._risk_assessments.save(risk_assessment)
             self._decisions.save(decision)
+            self._authorizations.save(authorization)
+            self._audit.record(
+                actor="decision_service",
+                component="decision.risk",
+                event_type="decision.risk_assessed",
+                action="assess",
+                result="success",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"level": risk_result.level.value, "factors": risk_result.factors},
+            )
             self._audit.record(
                 actor="decision_service",
                 component="decision.engine",
@@ -177,16 +193,19 @@ class DecisionService:
                     "requires_explicit_acknowledgement": rule.requires_explicit_acknowledgement,
                 },
             )
-
-        authorization = self._resolve_authorization(
-            task=task,
-            decision=decision,
-            risk_assessment=risk_assessment,
-            explicit_user_ack=explicit_user_ack,
-            acting_user=acting_user,
-        )
-
-        updated_task = self._orchestrator.advance(task.id, "authorize_and_run")
+            self._audit.record(
+                actor=authorization.granted_by,
+                component="decision.authorization",
+                event_type="decision.authorization.auto"
+                if not authorization.explicit
+                else "decision.authorized",
+                action="grant",
+                result="granted",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"explicit": authorization.explicit},
+            )
+            updated_task = self._orchestrator.advance(task.id, "authorize_and_run")
 
         return DecisionOutcome(
             decision=decision,
@@ -205,43 +224,47 @@ class DecisionService:
         acting_user: str,
     ) -> Authorization:
         if not decision.requires_authorization:
-            return self._grant(
-                task=task,
+            return Authorization(
+                id=self._ids.new_id(),
+                task_id=task.id,
+                granted=True,
                 granted_by="system",
                 explicit=False,
-                event_type="decision.authorization.auto",
             )
 
         if explicit_user_ack:
-            return self._grant(
-                task=task,
+            return Authorization(
+                id=self._ids.new_id(),
+                task_id=task.id,
+                granted=True,
                 granted_by=acting_user,
                 explicit=True,
-                event_type="decision.authorized",
             )
 
         if not decision.requires_explicit_acknowledgement:
             # MEDIUM tier: "optional acknowledgement" — proceed with an
             # implicit, non-explicit authorization, but the warning is
             # still on record via the Decision + audit trail above.
-            return self._grant(
-                task=task,
+            return Authorization(
+                id=self._ids.new_id(),
+                task_id=task.id,
+                granted=True,
                 granted_by="system",
                 explicit=False,
-                event_type="decision.authorization.implicit",
             )
 
         # HIGH / CRITICAL / UNKNOWN tier with no explicit ack yet: block.
-        self._audit.record(
-            actor="decision_service",
-            component="decision.authorization",
-            event_type="decision.authorization.awaiting",
-            action="resolve_authorization",
-            result="blocked",
-            request_id=task.request_id,
-            task_id=task.id,
-            metadata={"risk": decision.risk.value},
-        )
+        with self._uow:
+            self._audit.record(
+                actor="decision_service",
+                component="decision.authorization",
+                event_type="decision.authorization.awaiting",
+                action="resolve_authorization",
+                result="blocked",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"risk": decision.risk.value},
+            )
         raise AuthorizationRequiredError(task.id, decision, risk_assessment)
 
     def _grant(

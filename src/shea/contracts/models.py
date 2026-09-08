@@ -142,6 +142,9 @@ class AuditEvent:
     action: str
     result: str
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    sequence_number: int = 0
+    prev_hash: str | None = None
+    event_hash: str | None = None
 
 
 @dataclass

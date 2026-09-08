@@ -52,8 +52,12 @@ CREATE TABLE IF NOT EXISTS audit_events (
     event_type  TEXT NOT NULL,
     action      TEXT NOT NULL,
     result      TEXT NOT NULL,
-    metadata    TEXT NOT NULL DEFAULT '{}'  -- JSON object
+    metadata    TEXT NOT NULL DEFAULT '{}',  -- JSON object
+    sequence_number INTEGER,
+    prev_hash TEXT,
+    event_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_events_task_id ON audit_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_request_id ON audit_events(request_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_events_sequence_number ON audit_events(sequence_number);

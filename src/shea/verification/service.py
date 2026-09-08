@@ -113,7 +113,7 @@ class VerificationService:
                 metadata={"method": outcome.method, "tool": record.tool},
             )
 
-        event = "verified" if outcome.verified else "verification_failed"
-        advanced_task = self._orchestrator.advance(task.id, event)
+            event = "verified" if outcome.verified else "verification_failed"
+            advanced_task = self._orchestrator.advance(task.id, event)
 
         return VerificationResult(verification=verification, task=advanced_task)
