@@ -25,13 +25,19 @@ class SqliteAuditSink:
         with self._uow:
             tip = self._conn.execute(
                 "SELECT sequence_number, event_hash FROM audit_events "
-                "ORDER BY sequence_number DESC LIMIT 1"
+                "WHERE request_id IS ? AND task_id IS ? "
+                "ORDER BY sequence_number DESC LIMIT 1",
+                (event.request_id, event.task_id),
             ).fetchone()
+            next_sequence_number = self._conn.execute(
+                "SELECT COALESCE(MAX(sequence_number), 0) + 1 "
+                "FROM audit_events"
+            ).fetchone()[0]
             if tip is None:
-                sequence_number = event.sequence_number or 1
+                sequence_number = event.sequence_number or next_sequence_number
                 prev_hash = event.prev_hash
             else:
-                sequence_number = event.sequence_number or (tip["sequence_number"] + 1)
+                sequence_number = event.sequence_number or next_sequence_number
                 prev_hash = event.prev_hash or tip["event_hash"]
 
             calc_prev_hash = prev_hash if prev_hash is not None else GENESIS_PREV_HASH

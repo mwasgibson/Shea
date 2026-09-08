@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any
 
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import PolicyVerdict
-from shea.contracts.models import Authorization, Decision, RiskAssessment, Task
+from shea.contracts.models import Authorization, Decision, Plan, PlanStep, RiskAssessment, Task
 from shea.core.orchestrator import Orchestrator
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
@@ -14,6 +16,12 @@ from shea.ports.repositories import (
     RiskAssessmentRepository,
 )
 from shea.ports.unit_of_work import UnitOfWork
+from shea.security.binding import (
+    compute_arguments_hash,
+    compute_plan_hash,
+    compute_step_hash,
+    generate_nonce,
+)
 
 from .confirmation import confirmation_rule_for
 from .exceptions import AuthorizationRequiredError, PolicyDeniedError
@@ -110,6 +118,9 @@ class DecisionService:
         external_content_involved: bool = False,
         explicit_user_ack: bool = False,
         acting_user: str = "user",
+        plan: Plan | None = None,
+        step: PlanStep | None = None,
+        arguments: dict[str, Any] | None = None,
     ) -> DecisionOutcome:
         verdict = self._policy.evaluate(capabilities)
 
@@ -163,6 +174,9 @@ class DecisionService:
             risk_assessment=risk_assessment,
             explicit_user_ack=explicit_user_ack,
             acting_user=acting_user,
+            plan=plan,
+            step=step,
+            arguments=arguments,
         )
 
         with self._uow:
@@ -222,7 +236,24 @@ class DecisionService:
         risk_assessment: RiskAssessment,
         explicit_user_ack: bool,
         acting_user: str,
+        plan: Plan | None = None,
+        step: PlanStep | None = None,
+        arguments: dict[str, Any] | None = None,
     ) -> Authorization:
+        # Compute binding hashes if plan/step/arguments are provided
+        plan_hash = None
+        step_hash = None
+        arguments_hash = None
+        nonce = None
+
+        if plan is not None:
+            plan_hash = compute_plan_hash(plan)
+            if step is not None:
+                step_hash = compute_step_hash(step)
+            if arguments is not None:
+                arguments_hash = compute_arguments_hash(arguments)
+                nonce = generate_nonce()
+
         if not decision.requires_authorization:
             return Authorization(
                 id=self._ids.new_id(),
@@ -230,6 +261,11 @@ class DecisionService:
                 granted=True,
                 granted_by="system",
                 explicit=False,
+                plan_hash=plan_hash,
+                step_hash=step_hash,
+                arguments_hash=arguments_hash,
+                expires_at=self._clock.now() + timedelta(hours=1),
+                nonce=nonce,
             )
 
         if explicit_user_ack:
@@ -239,6 +275,11 @@ class DecisionService:
                 granted=True,
                 granted_by=acting_user,
                 explicit=True,
+                plan_hash=plan_hash,
+                step_hash=step_hash,
+                arguments_hash=arguments_hash,
+                expires_at=self._clock.now() + timedelta(hours=1),
+                nonce=nonce,
             )
 
         if not decision.requires_explicit_acknowledgement:
@@ -251,6 +292,11 @@ class DecisionService:
                 granted=True,
                 granted_by="system",
                 explicit=False,
+                plan_hash=plan_hash,
+                step_hash=step_hash,
+                arguments_hash=arguments_hash,
+                expires_at=self._clock.now() + timedelta(hours=1),
+                nonce=nonce,
             )
 
         # HIGH / CRITICAL / UNKNOWN tier with no explicit ack yet: block.

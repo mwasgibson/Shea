@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 
 from shea.contracts.models import Authorization
 
@@ -17,13 +18,32 @@ class SqliteAuthorizationRepository:
     def __init__(self, conn: sqlite3.Connection, *, unit_of_work: SqliteUnitOfWork) -> None:
         self._conn = conn
         self._uow = unit_of_work
+        
+    def _parse_optional_datetime(self, value: str | None) -> datetime | None:
+       if value is None:
+        return None
+       return datetime.fromisoformat(value)    
 
     def save(self, authorization: Authorization) -> None:
         with self._uow:
             self._conn.execute(
                 """
-                INSERT INTO authorizations (id, task_id, granted, granted_by, explicit)
-                VALUES (:id, :task_id, :granted, :granted_by, :explicit)
+                INSERT INTO authorizations
+                    (id, task_id, granted, granted_by, explicit,
+                     plan_hash, step_hash, arguments_hash, expires_at, used_at, nonce)
+                VALUES
+                    (:id, :task_id, :granted, :granted_by, :explicit,
+                     :plan_hash, :step_hash, :arguments_hash, :expires_at, :used_at, :nonce)
+                ON CONFLICT(id) DO UPDATE SET
+                    granted = :granted,
+                    granted_by = :granted_by,
+                    explicit = :explicit,
+                    plan_hash = :plan_hash,
+                    step_hash = :step_hash,
+                    arguments_hash = :arguments_hash,
+                    expires_at = :expires_at,
+                    used_at = :used_at,
+                    nonce = :nonce
                 """,
                 {
                     "id": authorization.id,
@@ -31,14 +51,31 @@ class SqliteAuthorizationRepository:
                     "granted": int(authorization.granted),
                     "granted_by": authorization.granted_by,
                     "explicit": int(authorization.explicit),
+                    "plan_hash": authorization.plan_hash,
+                    "step_hash": authorization.step_hash,
+                    "arguments_hash": authorization.arguments_hash,
+                    "expires_at": (authorization.expires_at.isoformat()
+                    if authorization.expires_at
+                    else None),
+                    "used_at": (authorization.used_at.isoformat()
+                    if authorization.used_at
+                    else None),
+                    "nonce": authorization.nonce,
                 },
             )
 
     def list_by_task(self, task_id: str) -> list[Authorization]:
         rows = self._conn.execute(
-            "SELECT * FROM authorizations WHERE task_id = ? ORDER BY rowid",
+            """
+            SELECT id, task_id, granted, granted_by, explicit,
+                   plan_hash, step_hash, arguments_hash, expires_at, used_at, nonce
+            FROM authorizations
+            WHERE task_id = ?
+            ORDER BY id
+            """,
             (task_id,),
         ).fetchall()
+
         return [
             Authorization(
                 id=row["id"],
@@ -46,6 +83,12 @@ class SqliteAuthorizationRepository:
                 granted=bool(row["granted"]),
                 granted_by=row["granted_by"],
                 explicit=bool(row["explicit"]),
+                plan_hash=row["plan_hash"],
+                step_hash=row["step_hash"],
+                arguments_hash=row["arguments_hash"],
+                expires_at=self._parse_optional_datetime(row["expires_at"]),
+                used_at=self._parse_optional_datetime(row["used_at"]),
+                nonce=row["nonce"],
             )
             for row in rows
         ]

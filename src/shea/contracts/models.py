@@ -119,6 +119,12 @@ class Authorization:
 
     `explicit` and auditability are both required per Appendix B:
     "USER OVERRIDE = EXPLICIT + AUDITABLE".
+
+    Phase 8 hardening: Authorization is now bound to specific content hashes
+    and has expiry + replay protection. This prevents:
+    - Authorization replay: same auth used for different plan/step/arguments
+    - Authorization misuse after plan changes
+    - Authorization use after expiry
     """
 
     id: str
@@ -126,6 +132,14 @@ class Authorization:
     granted: bool
     granted_by: str
     explicit: bool = True
+    # Content binding hashes (SHA-256)
+    plan_hash: str | None = None
+    step_hash: str | None = None
+    arguments_hash: str | None = None
+    # Expiry and replay protection
+    expires_at: datetime | None = None
+    used_at: datetime | None = None
+    nonce: str | None = None  # One-time use token for replay protection
 
 
 @dataclass
@@ -335,3 +349,21 @@ class RecoveryDecisionRecord:
     reason: str
     attempt_number: int
     created_at: datetime
+    
+@dataclass(frozen=True)
+class AuditChainBreak:
+    """One detected inconsistency in the chain, at a specific sequence
+    number, described in plain terms rather than just "hash mismatch" —
+    the three cases below want different remediation.
+    """
+
+    sequence_number: int
+    kind: str  # "content_altered" | "link_broken" | "sequence_gap"
+    detail: str
+
+
+@dataclass(frozen=True)
+class AuditChainVerificationResult:
+    valid: bool
+    events_checked: int
+    breaks: tuple[AuditChainBreak, ...]    

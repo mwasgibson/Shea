@@ -6,12 +6,15 @@ from shea.contracts.models import ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
 from shea.decision.service import DecisionService
 from shea.execution.service import ExecutionService
+from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
+from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.planning.capabilities import capabilities_for_plan
 from shea.planning.service import PlanningService
 from shea.planning.templates import PlanTemplateRegistry, StepBlueprint
+from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.recovery.service import RecoveryService
 from shea.security.service import SecurityService
@@ -29,7 +32,9 @@ def test_full_pipeline_from_raw_text_to_completed(
     decision_service: DecisionService,
     tool_executor: ToolExecutor,
     orchestrator: Orchestrator,
+    authorization_repository: SqliteAuthorizationRepository,
     decision_repository: SqliteDecisionRepository,
+    plan_repository: SqlitePlanRepository,
     tool_execution_repository: SqliteToolExecutionRepository,
     audit_recorder: AuditRecorder,
     id_generator: IdGenerator,
@@ -39,6 +44,7 @@ def test_full_pipeline_from_raw_text_to_completed(
     template_registry: PlanTemplateRegistry,
     tool_registry: ToolRegistry,
     unit_of_work: SqliteUnitOfWork,
+    clock: Clock,
 ) -> None:
     """The capstone test: a raw text request drives every phase built so
     far — Planning, Decision, Security, Execution, Verification — with
@@ -61,12 +67,15 @@ def test_full_pipeline_from_raw_text_to_completed(
     execution_service = ExecutionService(
         tool_executor=tool_executor,
         orchestrator=orchestrator,
+        authorization_repository=authorization_repository,
         decision_repository=decision_repository,
+        plan_repository=plan_repository,
         tool_execution_repository=tool_execution_repository,
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
         unit_of_work=unit_of_work,
+        clock=clock,
     )
 
     def weather_handler(request: ToolRequest) -> ToolResponse:
@@ -123,7 +132,9 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     decision_service: DecisionService,
     tool_executor: ToolExecutor,
     orchestrator: Orchestrator,
+    authorization_repository: SqliteAuthorizationRepository,
     decision_repository: SqliteDecisionRepository,
+    plan_repository: SqlitePlanRepository,
     tool_execution_repository: SqliteToolExecutionRepository,
     unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
@@ -133,6 +144,7 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     template_registry: PlanTemplateRegistry,
     tool_registry: ToolRegistry,
     recovery_service: RecoveryService,
+    clock: Clock,
 ) -> None:
     """Capstone recovery pipeline.
 
@@ -155,12 +167,15 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     execution_service = ExecutionService(
         tool_executor=tool_executor,
         orchestrator=orchestrator,
+        authorization_repository=authorization_repository,
         decision_repository=decision_repository,
+        plan_repository=plan_repository,
         tool_execution_repository=tool_execution_repository,
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
         unit_of_work=unit_of_work,
+        clock=clock,
     )
 
     execution_count = 0

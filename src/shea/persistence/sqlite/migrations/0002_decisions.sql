@@ -32,7 +32,13 @@ CREATE TABLE IF NOT EXISTS authorizations (
     task_id     TEXT NOT NULL REFERENCES tasks(id),
     granted     INTEGER NOT NULL,
     granted_by  TEXT NOT NULL,
-    explicit    INTEGER NOT NULL DEFAULT 1
+    explicit    INTEGER NOT NULL DEFAULT 1,
+    plan_hash   TEXT,
+    step_hash   TEXT,
+    arguments_hash   TEXT,
+    expires_at  TEXT NOT NULL,
+    used_at     TEXT,
+    nonce      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_authorizations_task_id ON authorizations(task_id);

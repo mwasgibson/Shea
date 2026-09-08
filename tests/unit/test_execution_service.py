@@ -16,7 +16,7 @@ from shea.execution.service import (
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
-from shea.ports.repositories import DecisionRepository, ToolExecutionRepository
+from shea.ports.repositories import AuthorizationRepository, DecisionRepository, PlanRepository, ToolExecutionRepository
 from shea.security.service import SecurityService
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry
@@ -176,7 +176,9 @@ def test_execution_service_transaction_rolls_back_on_audit_failure(
     unit_of_work: SqliteUnitOfWork,
     orchestrator: Orchestrator,
     tool_executor: ToolExecutor,
+    authorization_repository: AuthorizationRepository,
     decision_repository: DecisionRepository,
+    plan_repository: PlanRepository,
     tool_execution_repository: ToolExecutionRepository,
     security_service: SecurityService,
     tool_registry: ToolRegistry,
@@ -201,12 +203,15 @@ def test_execution_service_transaction_rolls_back_on_audit_failure(
     broken_service = ExecutionService(
         tool_executor=tool_executor,
         orchestrator=orchestrator,
+        authorization_repository=authorization_repository,
         decision_repository=decision_repository,
+        plan_repository=plan_repository,
         tool_execution_repository=tool_execution_repository,
         audit=broken_audit,
         id_generator=id_generator,
         security_service=security_service,
         unit_of_work=unit_of_work,
+        clock=clock
     )
 
     with pytest.raises(RuntimeError, match="simulated audit sink failure"):

@@ -245,22 +245,28 @@ def tool_execution_repository(
 def execution_service(
     tool_executor: ToolExecutor,
     orchestrator: Orchestrator,
+    authorization_repository: SqliteAuthorizationRepository,
     decision_repository: SqliteDecisionRepository,
+    plan_repository: SqlitePlanRepository,
     tool_execution_repository: SqliteToolExecutionRepository,
     audit_recorder: AuditRecorder,
     id_generator: SequentialIdGenerator,
     security_service: SecurityService,
     unit_of_work: SqliteUnitOfWork,
+    clock: Clock,
 ) -> ExecutionService:
     return ExecutionService(
         tool_executor=tool_executor,
         orchestrator=orchestrator,
         decision_repository=decision_repository,
+        authorization_repository=authorization_repository,
+        plan_repository=plan_repository,
         tool_execution_repository=tool_execution_repository,
         audit=audit_recorder,
         id_generator=id_generator,
         security_service=security_service,
         unit_of_work=unit_of_work,
+        clock=clock,
     )
 
 

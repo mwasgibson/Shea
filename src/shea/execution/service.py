@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
+from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
-from shea.ports.repositories import DecisionRepository, ToolExecutionRepository
+from shea.ports.repositories import AuthorizationRepository, DecisionRepository, PlanRepository, ToolExecutionRepository
 from shea.ports.unit_of_work import UnitOfWork
 from shea.recovery.idempotency import IdempotencyKeyGenerator
+from shea.security.binding import (
+    compute_arguments_hash,
+    compute_plan_hash,
+    compute_step_hash,
+)
+from shea.security.exceptions import AuthorizationBindingMismatchError, AuthorizationExpiredError
 from shea.security.service import SecurityService
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 
@@ -130,20 +138,26 @@ class ExecutionService:
         tool_executor: ToolExecutor,
         orchestrator: Orchestrator,
         decision_repository: DecisionRepository,
+        authorization_repository: AuthorizationRepository,
+        plan_repository: PlanRepository,
         tool_execution_repository: ToolExecutionRepository,
         audit: AuditRecorder,
         id_generator: IdGenerator,
         security_service: SecurityService,
         unit_of_work: UnitOfWork,
+        clock: Clock,
     ) -> None:
         self._tool_executor = tool_executor
         self._orchestrator = orchestrator
         self._decisions = decision_repository
         self._tool_executions = tool_execution_repository
+        self._authorizations = authorization_repository
+        self._plans = plan_repository
         self._audit = audit
         self._ids = id_generator
         self._security = security_service
         self._uow = unit_of_work
+        self._clock = clock
 
     def execute(self, task: Task, request: ToolRequest) -> ExecutionOutcomeRecord:
         if task.state is not TaskState.RUNNING:
@@ -154,6 +168,7 @@ class ExecutionService:
         # on that path except let the exception propagate. Unconditional
         # — there is no flag or default that skips this call.
         self._security.enforce(task, request)
+        self._verify_authorization_binding(task, request)
 
         # Same logical operation (task/tool/action/arguments) always
         # produces the same key, so a retry of an already-attempted call
@@ -276,9 +291,81 @@ class ExecutionService:
                 metadata={"tool": request.tool, "success": result.response.success},
             )
 
-            event = _ADVANCE_EVENT_BY_OUTCOME[result.outcome]
-            advanced_task = self._orchestrator.advance(task.id, event)
+            auth = self._authorizations.list_by_task(task.id)[-1]
+            auth.used_at = self._clock.now()
+            self._authorizations.save(auth)
+
+            task = self._orchestrator.advance(
+                task.id, _ADVANCE_EVENT_BY_OUTCOME[result.outcome]
+            )
 
         return ExecutionOutcomeRecord(
-            response=result.response, outcome=result.outcome, task=advanced_task
+            response=result.response, outcome=result.outcome, task=task
         )
+        
+    def _verify_authorization_binding(self, task: Task, request: ToolRequest) -> None:
+        """Verify that the authorization for this task matches the current request.
+
+        Checks:
+        1. Authorization exists for this task
+        2. Plan hash matches (if authorization has a plan_hash)
+        3. Step hash matches (if authorization has a step_hash)
+        4. Arguments hash matches (if authorization has an arguments_hash)
+        5. Authorization has not expired
+        6. Authorization nonce has not been used (replay protection)
+        """
+        # Get the most recent authorization for this task
+        authorizations = self._authorizations.list_by_task(task.id)
+        if not authorizations:
+            raise MissingDecisionError(task.id)  # Reuse existing exception for now
+
+        # Use the most recent authorization
+        auth = authorizations[-1]
+        
+
+        # Check if authorization has been used (replay protection)
+        auth.used_at = self._clock.now()
+        self._authorizations.save(auth)
+
+        # Check expiry
+        expires_at: datetime | None = None
+        if auth.expires_at is not None:
+            expires_at = (
+                datetime.fromisoformat(auth.expires_at)
+                if isinstance(auth.expires_at, str)
+                else auth.expires_at
+            )
+        if expires_at is not None and expires_at < self._clock.now():
+            raise AuthorizationExpiredError(task_id=task.id, expired_at=expires_at)
+
+        # Get current plan for hash comparison
+        current_plans = self._plans.get_by_task(task.id) if auth.plan_hash else None
+
+        # Verify plan hash
+        if auth.plan_hash and current_plans:
+            current_plan_hash = compute_plan_hash(current_plans)
+            if auth.plan_hash != current_plan_hash:
+                raise AuthorizationBindingMismatchError(
+                    task.id, "plan", auth.plan_hash, current_plan_hash
+                )
+
+        # Verify step hash (if we can determine the current step)
+        if auth.step_hash:
+            # Find the step matching the request
+            if current_plans:
+                for step in current_plans.steps:
+                    if step.tool == request.tool:
+                        current_step_hash = compute_step_hash(step)
+                        if auth.step_hash != current_step_hash:
+                            raise AuthorizationBindingMismatchError(
+                                task.id, "step", auth.step_hash, current_step_hash
+                            )
+                        break
+
+        # Verify arguments hash
+        if auth.arguments_hash:
+            current_arguments_hash = compute_arguments_hash(request.arguments)
+            if auth.arguments_hash != current_arguments_hash:
+                raise AuthorizationBindingMismatchError(
+                    task.id, "arguments", auth.arguments_hash, current_arguments_hash
+                )    

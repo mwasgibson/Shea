@@ -2,30 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime
 
 from shea.audit.chain import GENESIS_PREV_HASH, hash_audit_event
-from shea.contracts.models import AuditEvent
+from shea.contracts.models import AuditEvent, AuditChainBreak, AuditChainVerificationResult
 
-
-@dataclass(frozen=True)
-class AuditChainBreak:
-    """One detected inconsistency in the chain, at a specific sequence
-    number, described in plain terms rather than just "hash mismatch" —
-    the three cases below want different remediation.
-    """
-
-    sequence_number: int
-    kind: str  # "content_altered" | "link_broken" | "sequence_gap"
-    detail: str
-
-
-@dataclass(frozen=True)
-class AuditChainVerificationResult:
-    valid: bool
-    events_checked: int
-    breaks: tuple[AuditChainBreak, ...]
 
 
 def verify_audit_chain(conn: sqlite3.Connection) -> AuditChainVerificationResult:
