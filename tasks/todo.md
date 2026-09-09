@@ -177,7 +177,7 @@
       eligibility iff required capabilities are a subset of available ones
 - [x] Full suite verified: 253/253 pytest, mypy --strict clean, ruff clean
 
-## Phase 8: Core Hardening (in progress)
+## Phase 8: Core Hardening & Enforcement (complete)
 
 - [x] `UnsafeExecutionNotAllowedError` — `ToolExecutor` now requires an
       explicit `allow_unsafe_execution=True` opt-in (or a real
@@ -232,116 +232,58 @@
       not a hardcoded value, now governs the budget)
 - [x] Full suite verified: 294/294 pytest, mypy --strict clean, ruff clean
 - [x] **Cross-repository transactional atomicity for the highest-stakes
-      transitions**: `Orchestrator.advance()` (and `create_task()` /
-      `attach_plan()`) each wrote a Task's state and recorded its audit
-      event as two independently-committed writes — `SqliteTaskRepository.
-      save()` and `SqliteAuditSink.record()` each called `self._conn.
-      commit()` on their own. A crash between the two left a state change
-      durably persisted with no audit trail for it.
-      `SecurityService.enforce()`'s violation path was worse: three
-      independently-committed writes (violation audit, task state,
-      transition audit) — a crash partway could leave a security
-      violation on record with the task still showing RUNNING, or a
-      halted task with no transition audit for it.
-      Fixed with a new `UnitOfWork` port (`shea/ports/unit_of_work.py`)
-      and re-entrant `SqliteUnitOfWork` adapter
-      (`shea/persistence/sqlite/unit_of_work.py`): nested `with` blocks
-      share one transaction, and only the outermost one commits or rolls
-      back. `SqliteTaskRepository` and `SqliteAuditSink` now take a
-      required `unit_of_work` and wrap their own single write in it
-      (unchanged behavior for any standalone caller — still commits
-      immediately); `Orchestrator` and `SecurityService` now also take
-      `unit_of_work` and wrap their write sequences in it, so the same
-      instance nests all the writes into one transaction. Sharing that
-      one instance across all four is required, not defaulted — same
-      "make it mandatory, not optional-by-default" pattern as the
-      `security_service` fix above — since a silently-not-shared
-      `UnitOfWork` would look wired but provide no actual guarantee.
-      Proven, not just asserted: `test_advance_rolls_back_task_state_
-      when_audit_write_fails` and `test_violation_path_rolls_back_
-      everything_if_halt_transition_fails` force a failure mid-
-      transaction with a `_RaisingAuditSink` and query the DB directly to
-      confirm the earlier write was rolled back too; `test_advance_
-      success_path_still_commits_both_writes` checks the success path
-      through a **fresh connection** to rule out same-connection
-      visibility masking a real durability gap.
-      Scope note: this covers Task + Audit writes specifically (the two
-      flagged). Other repositories (recovery attempts, tool executions,
-      decisions, etc.) still self-commit independently and are NOT yet
-      part of any cross-repository atomicity guarantee — an explicitly
-      flagged remaining gap, not a silent one.
-- [x] **Cross-repository transactional atomicity — full sweep.** All 8
-      remaining SQLite repositories that used to self-commit
-      (`SqliteAuthorizationRepository`, `SqliteToolExecutionRepository`,
-      `SqliteRiskAssessmentRepository`, `SqliteRecoveryAttemptRepository`,
-      `SqlitePlanRepository`, `SqliteIntentRepository`,
-      `SqliteVerificationRepository`, `SqliteDecisionRepository`) now
-      require the shared `unit_of_work` and wrap their writes in it, same
-      pattern as `SqliteTaskRepository`/`SqliteAuditSink` above.
-      `DecisionService`, `RecoveryService`, `ExecutionService`,
-      `VerificationService`, and `PlanningService` all now take
-      `unit_of_work` too and pair each repository-save with its adjacent
-      audit-record call atomically:
-      - `DecisionService.evaluate_and_authorize()`: risk-assessment+audit,
-        decision+audit, and (`_grant`) authorization+audit are each one
-        transaction.
-      - `RecoveryService`: attempt-save+audit in both `begin_recovery()`
-        and `resolve_recovery()`.
-      - `ExecutionService.execute()`: both the capability-denied path and
-        the normal outcome path pair the `ToolExecutionRecord` save with
-        its audit event.
-      - `VerificationService.verify()`: verification-record+audit.
-      - `PlanningService`: `_persist_intent()` pairs intent+audit, and
-        `create_and_plan()` now bundles `plan.save()` +
-        `orchestrator.attach_plan()` + `orchestrator.advance(...,
-        "plan_ready")` into **one** transaction (a real improvement, not
-        just consistency — before this a crash between `plan.save()` and
-        `attach_plan()` could leave a persisted Plan with no task
-        pointing to it).
-      This relies on `SqliteUnitOfWork`'s re-entrancy: each of
-      `Orchestrator`'s and `SecurityService`'s own internal `with
-      self._uow:` blocks (from the earlier fix) nest cleanly inside these
-      services' outer blocks without any signature changes needed on
-      `Orchestrator`/`SecurityService` themselves.
-      `tests/conftest.py` fully rewired — every repository and service
-      fixture threads the one shared `unit_of_work` instance. 10 direct
-      (non-fixture) construction sites across `test_recovery_service.py`,
-      `test_execution_service.py`, `test_planning_service.py`,
-      `test_end_to_end_pipeline.py`, `test_verification_service.py`, and
-      `test_decision_service.py` needed the same `unit_of_work=unit_of_work`
-      addition — mechanical, no design decisions, just easy to miss one.
-      Full suite re-verified: 296/297 pytest (see note below on the one
-      failure — unrelated to this work), mypy --strict clean, ruff clean.
-      Scope note, still accurate: this covers Task, Audit, Decision,
-      Risk, Authorization, Recovery Attempt, Tool Execution, Plan, Intent,
-      and Verification writes paired with their adjacent audit event.
-      What's still NOT covered: a `Plan`'s steps and a `Decision`'s
-      capabilities are separate concerns from the task-level operations
-      above, and there is still no repository-wide guarantee that spans
-      an entire multi-service call chain (e.g. `DecisionService.
-      evaluate_and_authorize()`'s three internal transactions are each
-      atomic on their own, but the method as a whole is not one single
-      transaction — deliberately, since `AuthorizationRequiredError` and
-      `PolicyDeniedError` are expected control-flow outcomes, not
-      crashes, and the risk/decision records made before either of those
-      should stay committed, not get rolled back with them).
-- [x] **CI/CD**: `.github/workflows/ci.yml` runs `pytest`, `mypy`, and
-      `ruff check .` on every push and pull request against `main`.
-      Before this, every verification claim recorded in this file and in
-      README.md depended entirely on whoever made the change actually
-      running those three commands locally — nothing stopped a
-      regression from landing silently. No matrix, no multi-OS, no
-      caching tricks: one job, Python 3.11 (the floor of `pyproject.
-      toml`'s `requires-python`), the same three commands already
-      documented everywhere else. Extend later if a real need shows up
-      (Section 16: driven by measurable requirements, not preemptively).
-- [ ] Remaining Phase 8 hardening scope, in priority order: (1) audit
-      tamper-evidence (hash-chained events); (2) authorization binding to
-      plan/step/argument hash + expiry + replay protection; (3) tool
-      schemas (argument validation); (4) fix the property-test gap noted
-      above. See "Not yet built" below for the full list, including items
-      deliberately excluded from Phase 8 as new-subsystem work rather
-      than hardening.
+      transitions** — shared re-entrant `UnitOfWork` for Orchestrator /
+      SecurityService critical paths (task + audit commit or roll back
+      together).
+- [x] **Cross-repository transactional atomicity — full sweep.** All SQLite
+      repositories that used to self-commit now require the shared
+      `unit_of_work`. Decision, Recovery, Execution, Verification, and
+      Planning services pair repository saves with adjacent audit records
+      under that UoW.
+- [x] CI: `.github/workflows/ci.yml` runs pytest, mypy, and ruff on push/PR.
+- [x] **Authorization content binding** — `Authorization` carries
+      `plan_hash` / `step_hash` / `arguments_hash`, `expires_at`, `used_at`,
+      and `nonce`. `DecisionService` loads the plan when `task.plan_id` is
+      set (or uses `plan=`), binds step/arguments, and issues a nonce
+      whenever binding is present. `ExecutionService` verifies binding
+      before the tool runs (hard fail on missing/mismatched content; no
+      soft skip), and sets `used_at` only after durable SUCCESS in the
+      same unit of work — FAILURE/UNKNOWN do not consume the grant.
+- [x] **Tool argument schemas** — `ToolDeclaration.argument_schema` +
+      `ToolSchema` validation in `ToolExecutor` (after capability gate,
+      before the boundary). Elevated capabilities require a non-`None`
+      schema at register time (`SchemaRequiredError`); `None` means open
+      tool, `{}` means explicit empty schema.
+- [x] **Multi-step state-machine foundation** — `step_verified` event
+      (`VERIFYING` → `READY`) so intermediate steps re-enter Decision via
+      `authorize_and_run`. `VerificationService.verify(more_steps=...)`
+      selects final vs intermediate. `PlanRunner` walks steps with
+      per-step binding. Full multi-step productization (durable step
+      status, 2+ step e2e) is Phase 10.
+- [x] Phase 8 documentation closed (README + this todo updated to complete).
+      Audit hash-chaining and adversarial test suites remain in
+      "Not yet built" — not required to close Phase 8.
+
+## Phase 9: First Real Tools
+
+- [ ] `security/runtime_checks.py` — `realpath_under_roots`, `resolve_and_check_url`
+- [ ] Builtin `filesystem.read` (schema + handler + runtime path check)
+- [ ] Builtin `filesystem.write` (schema + handler + runtime path check)
+- [ ] Real `Verifier` for `filesystem.write` (not default trust-success)
+- [ ] `register_builtin_tools(registry, *, filesystem_policy, ...)`
+- [ ] Unit tests: path allow/deny; symlink escape blocked after resolve
+- [ ] E2E: plan → decide (bound) → execute write → verify → COMPLETED under a temp allowed root
+- [ ] Optional: `http.fetch` + DNS re-check tests
+- [ ] README note for first real tools; pytest / mypy / ruff green
+
+## Phase 10: Multi-Step Execution
+
+- [ ] Persist `PlanStep.state` through the runner
+- [ ] PlanRunner product rules (stop on failure/injection; ack policy for steps after the first)
+- [ ] E2E: ≥2 steps (prefer write then read from Phase 9 tools)
+- [ ] Distinct authorization per step (no nonce reuse across steps)
+- [ ] Integration tests for `step_verified` → READY → authorize → next step
+- [ ] README multi-step section; pytest / mypy / ruff green
 
 ## Not yet built — explicitly flagged, not silently missing
 
@@ -353,20 +295,17 @@
 - [ ] Extensions & Updates (plugin manifest, signing, sandboxed activation)
 - [ ] Observability beyond the audit trail (structured logs, metrics,
       tracing, correlation IDs across a request)
-- [ ] Multi-step plan execution — `ExecutionService` runs one tool call
-      per invocation; a real `Plan` with multiple `PlanStep`s is never
-      looped over, checkpointed, or resumed
+- [ ] Multi-step plan execution (product finish) — SM + `PlanRunner` +
+      `step_verified` exist (Phase 8); durable `PlanStep` state and 2+
+      step e2e with real tools are Phase 10
 - [ ] Real OS-level sandboxing (namespaces/seccomp/cgroups or platform
       equivalent) — `SandboxedExecutionBoundary` enforces timeout and
       redaction only; a thread timeout does not terminate an underlying
       process, socket, or file handle a tool already opened
-- [ ] Tool schemas (input/output JSON schema, per-action argument
-      validation) — `ToolDeclaration` has capabilities but no argument
-      contract; a malformed argument is only caught by the tool itself
-- [ ] Authorization binding to plan/step/argument hash + expiry + replay
-      protection — an `Authorization` currently belongs to a task, not to
-      a specific plan version; nothing prevents reusing one after the
-      plan it was granted for has changed
+- [x] ~~Tool schemas~~ — done in Phase 8 (`argument_schema`, elevated
+      capability gate, executor validation)
+- [x] ~~Authorization binding~~ — done in Phase 8 (hashes, expiry, nonce,
+      used_at-after-SUCCESS)
 - [ ] Dedicated secret store (OS keychain/Secret Service/Credential
       Manager) — `SecretRedactor` prevents secrets leaking into audit
       metadata, but there is no `SecretStore.get/set/delete/rotate`
@@ -376,369 +315,13 @@
       insert-only by API (`AuditSink` exposes no update/delete), but
       nothing detects direct database tampering
 - [x] ~~Cross-repository transactional atomicity~~ — done as of Phase 8's
-      full sweep (see the completed Phase 8 item above): every repository
-      write that pairs with an audit event now shares a `UnitOfWork` and
-      commits or rolls back atomically. What's still open, not covered by
-      that sweep: no single transaction spans an entire multi-service
-      call chain (e.g. the full `DecisionService.evaluate_and_authorize()`
-      call is three separate atomic transactions, not one — deliberately,
-      per the scope note on that item).
+      full sweep: every repository write that pairs with an audit event
+      now shares a `UnitOfWork` and commits or rolls back atomically.
+      What's still open: no single transaction spans an entire
+      multi-service call chain (deliberately).
 - [ ] Concurrency model (task scheduler, per-tool concurrency limits,
       cancellation as a real execution mechanism, backpressure)
 - [ ] Resource governance (CPU/RAM/disk/output-size/call-rate limits)
 - [ ] Full testing pyramid — unit + property exist; no integration/E2E/
       adversarial security suite yet (SSRF via IPv6, Unicode path tricks,
       sandbox escape, replay attacks, etc.)
-
-## Phase 1 Review
-
-**Verified 2026-08-16:**
-
-- `pytest`: 43/43 passed (21 state-machine unit, 4 task-repository, 7
-  config-resolver, 8 orchestrator, 3 Hypothesis property tests)
-- `mypy --strict`: clean across all 26 source files
-- `ruff check .`: clean
-
-**What the property tests actually prove:**
-
-- `next_state()` and `validate_transition()` can never disagree, across
-  every `TaskState` × a mix of real event names and random strings.
-- Every terminal state (`COMPLETED`, `CANCELLED`, `SECURITY_HALT`) rejects
-  every possible event — nothing can move a "done" task anywhere.
-- No event other than `authorize_and_run` can ever produce a transition
-  into `RUNNING`, from any state — this is the concrete, testable form of
-  `PLAN != AUTHORIZATION` (Appendix B).
-
-**Known simplifications, intentional for Phase 1, to revisit later:**
-
-- `PlanRepository.save()` does delete-then-reinsert of steps rather than
-  diffing. Fine at current scale; revisit if step counts grow.
-- No connection pooling — one `sqlite3.Connection` per test/process. Fine
-  until concurrent access is a real requirement (Section 16, "driven by
-  measurable requirements," not preemptively).
-- `AuditSink` has no query/read API yet, only `record()`. Reads will be
-  added when the first consumer (e.g. a CLI or the Decision engine) needs
-  them — no speculative API surface.
-
-**Next steps (not started, see "Explicitly deferred" above):** Decision/
-Policy/Risk engine is the natural next phase — it's the first subsystem
-that actually populates the `Decision`/`RiskAssessment`/`Authorization`
-contracts and calls `Orchestrator.advance()` with `authorize_and_run`.
-
----
-
-## Phase 2 Review
-
-**Verified 2026-08-17 (fresh extraction, not the in-place dev venv):**
-
-- `pytest`: 68/68 passed (43 from Phase 1 + 25 new: 6 policy, 7 risk,
-  9 decision-service integration, 3 policy property tests)
-- `mypy --strict`: clean across all 35 source files
-- `ruff check .`: clean
-
-**What the new property tests prove:**
-
-- Whenever a random capability set intersects a random deny list, the
-  verdict is always `DENIED` — never downgraded to `REQUIRES_AUTHORIZATION`
-  or `ALLOWED` by anything else about the request. `evaluate()` takes no
-  argument that changes this, by construction.
-- `evaluate()` is total: for any capability set, the result is always
-  exactly one of the three `PolicyVerdict` members.
-
-**What the integration tests prove (the actual point of Phase 2):**
-
-- A `PolicyDeniedError` cannot be bypassed by `explicit_user_ack=True` —
-  proven directly, not just documented (`test_policy_denied_capability_
-  blocks_even_with_explicit_ack`).
-- A HIGH-risk action IS unblockable by an explicit acknowledgement —
-  `WARNING != DENIAL` (Appendix B), proven as the mirror image of the
-  above rather than asserted in a comment.
-- When authorization is required and not given, the task's state is
-  provably unchanged (`READY`, not `RUNNING`) — no partial advancement.
-- Every denial and every "awaiting authorization" block is audited, with
-  the audit row asserted directly against the `audit_events` table, not
-  just "a method was called."
-
-**Known simplifications, intentional for Phase 2:**
-
-- `PolicyEngine`/`RiskEngine` ship with sensible default capability sets
-  from the technical doc's own vocabulary (Section 10.4), but contain no
-  actual security policy of their own — a real deployment must supply its
-  own `deny_capabilities` (currently empty by default). This is
-  deliberate: baking in "real" deny rules without the Security phase's
-  threat model behind them would be guessing.
-- `DecisionService` assumes the task is already in `READY` state (i.e.
-  Planning has already happened). Since Planning doesn't exist yet, tests
-  drive the state machine directly via the `ready_task` fixture.
-- Risk scoring is a simple factor-count → level mapping (0→SAFE ...
-  4→CRITICAL). It matches the doc's Section 12 worked example exactly but
-  is intentionally the simplest total function that does — a real risk
-  engine will likely need weighted factors, not just counts.
-- One risk assessment / one decision per task in Phase 2 (upsert, not
-  history). Re-assessment (e.g. after RECOVERING) isn't modeled yet.
-
-**Next natural step:** Tool Registry + Executor. It's the first subsystem
-that gives `capabilities` (currently just opaque strings passed into
-`DecisionService`) a real backing — actual tools that declare their
-required capabilities per technical doc Section 10.4's `Tool` contract —
-and the first subsystem that does something once `RUNNING` is reached.
-
----
-
-### Phase 3 Review
-
-**Verified 2026-08-17 (fresh venv + fresh extraction):**
-
-- `pytest`: 89/89 passed (68 from Phase 1+2, 21 new)
-- `mypy --strict`: clean across all 40 source files
-- `ruff check .`: clean
-
-**What the tests actually prove:**
-
-- `test_unauthorized_capability_never_reaches_handler` — the handler
-  function itself is never called when required capabilities aren't a
-  subset of authorized ones, verified with a call-recording spy, not just
-  an exception assertion.
-- The property test sweeps every combination of `required` vs.
-  `authorized` capability sets (both randomized) and confirms the handler
-  fires exactly when `required <= authorized` — never partially.
-- `test_unknown_outcome_error_is_unknown_not_failure` and
-  `test_unknown_outcome_advances_task_to_blocked_not_failed` — UNKNOWN
-  stays distinct from FAILURE end-to-end, from the executor through to
-  the task's actual persisted state.
-- `test_execution_without_decision_raises` — even though only
-  `DecisionService` can currently move a task to `RUNNING`, `ExecutionService`
-  doesn't trust that invariant blindly; it checks for a persisted
-  `Decision` and fails loudly if one is missing.
-
-**Known simplifications, intentional for Phase 3:**
-
-- No sandboxing, resource limits, or filesystem/network scoping — those
-  are the Security & Trust phase's job (research doc Section 10/11).
-  `ExecutionService` is the orchestration layer around that boundary, not
-  the boundary itself.
-- No `tool_executions` persistence table yet — execution attempts are
-  traceable via `audit_events`, which was judged sufficient for Phase 3's
-  scope. A dedicated table becomes worth adding once Verification &
-  Recovery needs richer per-attempt state than the audit log carries.
-- One tool call per `ExecutionService.execute()` — multi-step plan
-  execution (looping over `PlanStep`s) is Planning/Orchestration's job
-  once that subsystem exists.
-
-**Next natural step:** Intent Understanding & Planning is the last major
-piece before there's a real LLM in the loop — or, if you'd rather harden
-what exists first, Verification & Recovery (the `VERIFYING -> COMPLETED`
-half of the state machine, currently unimplemented) is a smaller, more
-self-contained slice.
-
----
-
-### Phase 4 Review
-
-**Verified 2026-08-17 (fresh venv + fresh extraction):**
-
-- `pytest`: 112/112 passed (89 from Phase 1-3, 23 new)
-- `mypy --strict`: clean across all 49 source files
-- `ruff check .`: clean
-
-**What the tests actually prove:**
-
-- `test_custom_verifier_can_override_execution_report` — a tool reporting
-  `success=True` does NOT force the task to `COMPLETED`. A registered
-  Verifier can independently disagree, and the task ends up `FAILED`.
-  This is `EXECUTION SUCCESS != VERIFIED SUCCESS` (Appendix B) proven as
-  behavior, not asserted in a docstring.
-- `test_resolve_recovery_with_default_compensator_never_claims_success` —
-  with no real compensating action configured, recovery resolves to
-  `FAILED`, not `READY`. The property test
-  `test_default_compensator_never_reports_restored` extends this across
-  arbitrary task IDs: the default never once returns `restored=True`.
-- `test_recovery_attempts_are_bounded` — drives three full recovery
-  cycles and confirms a fourth `begin_recovery()` call raises
-  `RecoveryExhaustedError`, with the task provably still `FAILED`
-  afterward (exhaustion doesn't silently move it anywhere).
-- The `UNKNOWN`-outcome property test from Phase 3
-  (`test_unknown_outcome_advances_task_to_blocked_not_failed`) now has a
-  real way out: `resolve_blocked()`, tested both for resuming
-  (`-> READY`) and cancelling (`-> CANCELLED`).
-
-**Known simplifications, intentional for Phase 4:**
-
-- `default_verifier` trusts a tool's own success report when no
-  tool-specific `Verifier` is registered — documented as a known
-  limitation in its own docstring, not a silent gap. Real verification
-  (e.g. re-reading a file a tool claims to have written) requires
-  tool-specific knowledge that belongs with each tool's own registration,
-  not a generic engine.
-- `RecoveryService.begin_recovery()` does not itself decide *why* a task
-  failed or whether retrying is sensible — that judgment belongs to
-  whatever calls it (eventually the Orchestrator/Planning layer). Phase 4
-  provides the bounded mechanism, not the retry policy.
-- One verification record and unlimited tool-execution records per task
-  (both listed, not upserted) — matches the append-only pattern used for
-  `Authorization` since Phase 2.
-
-**Next natural step:** Intent Understanding & Planning — the last major
-piece before a real LLM enters the loop, and the first subsystem that
-actually produces a `Plan` (currently just typed shape) for `DecisionService`
-to evaluate, rather than tests driving the state machine by hand.
-
----
-
-### Phase 5 Review
-
-**What the capstone test actually proves:** a task can go from a raw text
-string to `COMPLETED` calling only public service methods, in the order a
-real caller would use them — no test anywhere reaches into the state
-machine directly for this path. That's the concrete payoff of every prior
-phase's "sole caller of X transition" discipline: the pieces actually
-compose.
-
-**Known simplifications, intentional for Phase 5:**
-
-- `DeterministicIntentMatcher` is ordered case-insensitive substring
-  matching, not real NLU — documented as a starting point, not a claim of
-  sophistication.
-- No real model/LLM API integration ships — `ScriptedModelProvider` is a
-  deterministic double. Wiring an actual provider is Provider Routing's job.
-- `IntentParser`/`PlanningService`'s model-fallback prompts
-  (`_build_intent_prompt`, `_build_plan_prompt`) are simple f-strings, not
-  tuned prompts — they exist to give the fallback path something concrete
-  to validate against, not as production prompt engineering.
-
-**Next natural step (identified at the time):** Security & Trust — noted
-as deliberately deferred until there was an actual model boundary to
-constrain, which Phase 5 just built.
-
----
-
-### Phase 6 Review
-
-**A user-caught bug, not a self-caught one — worth recording accurately.**
-While reviewing this phase's code, the user found that Security had been
-built but never wired into anything (correct — `SecurityGate`/
-`SecurityService` existed but nothing called them), and supplied a first
-attempt at fixing it via a `ToolExecutor` boundary. That attempt had a real
-bug: after computing a response through the configured boundary, the code
-fell through to an unconditional second, raw `handler(request)` call —
-discarding the boundary's result entirely and, when a boundary was
-configured, invoking the handler twice. A non-idempotent tool would have
-run its side effect twice. The fix: `ToolExecutor` now has exactly one call
-site that can invoke a handler (`self._boundary.run(...)`), with
-`UnsafeExecutionBoundary` as the structural default rather than a
-special-cased branch — "no boundary configured" and "explicitly configured
-for no isolation" are now the same code path, not two.
-
-**A second issue caught during that same review:** the original boundary
-attempt reimplemented URL/path scanning inline, checking only arguments
-literally named `"path"` or `"url"` — narrower than, and inconsistent
-with, `SecurityGate.check_request()`'s general shape-based scan across
-every string argument. Consolidated: `SandboxedExecutionBoundary` now
-contains zero policy-checking logic of its own — that lives only in
-`SecurityGate`, called once, upstream, by `SecurityService.enforce()` —
-and does only the mechanical sandboxing (timeout, redaction) a "Sandbox"
-pipeline stage is actually responsible for.
-
-**What the tests actually prove:**
-
-- `test_injected_boundary_is_used_and_handler_is_called_exactly_once` —
-  a spy boundary and a spy handler both assert call count `== 1`,
-  directly disproving the double-invocation bug rather than just testing
-  around it.
-- `test_argument_key_name_does_not_matter_for_url_detection` — an SSRF
-  attempt in an argument named `target` (not `url`) is still caught,
-  proving the shape-based scan actually replaced the narrower key-based one.
-- `test_enforce_halts_task_on_ssrf_attempt` +
-  `test_security_halt_is_terminal_even_after_this_service` — a violation
-  drives the task to `SECURITY_HALT`, and that state is then proven
-  terminal (any further `advance()` call raises `IllegalTransitionError`),
-  not just documented as terminal.
-- `test_sandboxed_boundary_raises_unknown_outcome_on_timeout` — a real
-  0.3s-sleeping handler against a 0.05s timeout produces `UnknownOutcomeError`,
-  not a `FAILURE` outcome — Section 12.13's "connection dies, might have
-  succeeded" principle applied to the timeout case specifically, with an
-  actual slow handler, not a mocked timer.
-- The property tests generate loopback/private/link-local addresses across
-  every octet Hypothesis tries and confirm none of them slip through.
-
-**Known simplifications, intentional for Phase 6:**
-
-- `NetworkPolicy`/`FilesystemPolicy` check literal request content, not
-  runtime behavior — DNS rebinding (a hostname resolving to a private IP
-  at request time) and symlink-based path escapes are both documented,
-  explicit gaps that require real network resolution / OS-level realpath
-  checks at actual access time, which belongs in a future real sandbox
-  runtime, not these pure policy functions.
-- `PromptInjectionDetector` is a heuristic phrase list, not a classifier —
-  a determined attacker can phrase around it. Documented the same way
-  `default_verifier` documents its own honesty about being a fallback,
-  not a complete solution.
-- `SecurityService.scan_output()` records a security event but does not
-  itself halt the task on a detected injection attempt — per research doc
-  Section 11.6, untrusted content is data, not authority; a future policy
-  phase may want to make repeated or high-confidence detections
-  consequential, but that's a policy decision this phase deliberately
-  left unmade.
-- `SecretRedactor`'s patterns cover common shapes (AWS-style keys, bearer
-  tokens, `sk-` prefixes, key=value pairs) but cannot cover every possible
-  secret format — defense in depth, not the primary control (secrets
-  belong in a dedicated store per Section 11.7, not general context).
-
-**Next natural step:** Provider Routing — the last piece before a real
-model can actually be swapped in behind the `ModelProvider` port Phase 5
-defined, now that Security constrains what that model is allowed to do.
-
----
-
-### Phase 7 Review
-
-**What the tests actually prove:**
-
-- `test_no_eligible_provider_raises_without_attempting_any` and
-  `test_missing_capability_provider_never_attempted` — both use a
-  call-recording provider subclass and assert zero calls, the same
-  "prove the handler was never reached" pattern used for Phase 3's
-  capability gate and Phase 6's security gate, applied here to provider
-  selection.
-- `test_require_local_only_never_fails_over_to_remote` — the literal
-  scenario research doc Section 8.11 describes, with only a remote
-  provider registered: routing must raise rather than quietly using it.
-- `test_service_is_a_drop_in_model_provider_for_intent_parser` — actually
-  constructs a real `IntentParser` with a `ProviderRoutingService` in the
-  `model_provider` slot and parses an intent through it, proving the
-  structural-typing claim behaviorally rather than just by inspection.
-- The property tests directly mirror the "non-negotiable tier" shape
-  established in Phase 2 (`PolicyVerdict.DENIED`) and Phase 6 (SSRF
-  blocking): `UNTRUSTED` is swept across every trust level, health state,
-  and capability combination Hypothesis generates, and never once
-  produces a non-empty eligible list.
-
-**Known simplifications, intentional for Phase 7:**
-
-- No same-provider retry with backoff/jitter (research doc Section
-  8.14) — every failure fails over to the next eligible provider
-  immediately. `FailureCategory`/`RETRYABLE_CATEGORIES` are captured now
-  so that mechanism has correct data to consult when built, but the
-  mechanism itself isn't built yet.
-- No gradual traffic recovery percentages (Section 8.17's "5% -> 25% ->
-  50% -> 100%") — `HealthTracker` recovers to HEALTHY as soon as the
-  sliding window's error rate drops, which the doc itself calls an
-  acceptable V1 fallback ("a simpler cooldown plus health-check
-  mechanism is enough").
-- `classify_exception()` only recognizes this codebase's own exception
-  types (`ModelUnavailableError`, `MalformedModelOutputError`). A real
-  provider adapter integrating an actual API needs to translate its own
-  errors (HTTP 429, connection resets, etc.) into the existing taxonomy
-  as it's built — documented as an extension point, not a gap discovered
-  later.
-- No context-window reduction/reassembly on failover (Section 8.12) —
-  `ProviderRouter` filters out providers whose `context_limit` is too
-  small rather than trying to fit the request into a smaller one.
-
-**Next natural step:** the Activation & Audio pipeline is the last major
-research-doc subsystem with no code behind it at all — voice ingress
-(mic capture, VAD, wake-word, streaming STT). Alternatively, since a
-`ModelProvider` can now be routed but still isn't backed by any real
-LLM API, wiring an actual provider adapter (even a single one, e.g. via
-an HTTP client behind the `ModelProvider` port) would be the thing that
-makes every LLM-shaped piece of this system stop being scripted/simulated.
