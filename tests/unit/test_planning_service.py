@@ -21,7 +21,6 @@ from shea.ports.id_generator import IdGenerator
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 from shea.understanding.deterministic import DeterministicIntentMatcher, IntentDraft
 from shea.understanding.exceptions import AmbiguousIntentError
-
 from tests.helper import MINIMAL_SCHEMA
 
 

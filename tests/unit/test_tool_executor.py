@@ -11,8 +11,8 @@ from shea.tools.executor import (
     UnknownOutcomeError,
 )
 from shea.tools.registry import ToolDeclaration, ToolRegistry
-
 from tests.helper import MINIMAL_SCHEMA
+
 
 def make_request(tool: str = "test.tool") -> ToolRequest:
     return ToolRequest(request_id="req-1", tool=tool, action="do_thing")

@@ -9,7 +9,6 @@ from shea.planning.templates import PlanTemplateRegistry, StepBlueprint
 from shea.planning.validator import validate_plan
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 from shea.understanding.deterministic import IntentDraft
-
 from tests.helper import MINIMAL_SCHEMA
 
 

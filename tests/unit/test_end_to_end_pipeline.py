@@ -25,7 +25,6 @@ from shea.understanding.deterministic import (
     IntentDraft,
 )
 from shea.verification.service import VerificationService
-
 from tests.helper import MINIMAL_SCHEMA
 
 

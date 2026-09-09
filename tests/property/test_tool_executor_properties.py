@@ -7,7 +7,6 @@ from shea.contracts.enums import ExecutionOutcome
 from shea.contracts.models import ToolRequest, ToolResponse
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry
-
 from tests.helper import MINIMAL_SCHEMA
 
 capability_pool = st.sampled_from(

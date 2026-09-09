@@ -25,9 +25,8 @@ from shea.ports.repositories import (
 from shea.security.service import SecurityService
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry
-
-from tests.unit.test_orchestrator import _RaisingAuditSink # pyright: ignore[reportPrivateUsage]
 from tests.helper import MINIMAL_SCHEMA
+from tests.unit.test_orchestrator import _RaisingAuditSink  # pyright: ignore[reportPrivateUsage]
 
 
 def test_execute_on_non_running_task_raises(
