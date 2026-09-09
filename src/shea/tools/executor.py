@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from shea.contracts.enums import ExecutionOutcome
@@ -115,12 +115,12 @@ class ToolExecutor:
             # this check fails.
             raise CapabilityNotAuthorizedError(request.tool, missing)
 
-        self._validate_arguments(request, declaration)
+        validated_request = self._validate_arguments(request, declaration)
         handler = self._registry.get_handler(request.tool)
         effective_scope = scope or ExecutionScope()
 
         try:
-            response = self._boundary.run(request, handler, effective_scope)
+            response = self._boundary.run(validated_request, handler, effective_scope)
         except UnknownOutcomeError as exc:
             return ExecutionResult(
                 response=ToolResponse(success=False, error=str(exc)),
@@ -138,16 +138,30 @@ class ToolExecutor:
         outcome = ExecutionOutcome.SUCCESS if response.success else ExecutionOutcome.FAILURE
         return ExecutionResult(response=response, outcome=outcome)
     
-    def _validate_arguments(self, request: ToolRequest, declaration: ToolDeclaration) -> None:
-        """Validate tool arguments against the declared schema.
+    def _validate_arguments(
+        self, request: ToolRequest, declaration: ToolDeclaration
+    ) -> ToolRequest:
+        """Validate tool arguments against the declared schema and return
+        a request with declared defaults actually applied.
 
-        No schema on the declaration means no validation (tools stay open).
-        An explicit empty schema still rejects unknown arguments.
+        No schema on the declaration means no validation (tools stay
+        open) — the original request is returned unchanged. An explicit
+        empty schema still rejects unknown arguments.
+
+        Previously called `get_validated_arguments()` purely for its
+        side effect of raising on failure and discarded the defaulted
+        arguments it returned, so a schema's `default=` for a missing
+        optional argument was validated as present but never actually
+        reached the handler. Returning (and using) the result closes
+        that gap.
         """
         schema = self._get_schema(declaration)
         if schema is None:
-            return
-        schema.get_validated_arguments(request)
+            return request
+        validated_arguments = schema.get_validated_arguments(request)
+        if validated_arguments == request.arguments:
+            return request
+        return replace(request, arguments=validated_arguments)
 
 
     def _get_schema(self, declaration: ToolDeclaration) -> ToolSchema | None:
@@ -159,8 +173,7 @@ class ToolExecutor:
 
         # No schema declared → skip validation entirely
         if declared_schema is None:
-            self._schema_cache[declaration.name] = None  # type: ignore[assignment]
-            # Better: use a separate cache or don't cache None; simplest:
+            self._schema_cache[declaration.name] = None
             return None
 
         if isinstance(declared_schema, ToolSchema):

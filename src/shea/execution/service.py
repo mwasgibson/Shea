@@ -22,7 +22,11 @@ from shea.security.binding import (
     compute_plan_hash,
     compute_step_hash,
 )
-from shea.security.exceptions import AuthorizationBindingMismatchError, AuthorizationExpiredError
+from shea.security.exceptions import (
+    AuthorizationAlreadyUsedError,
+    AuthorizationBindingMismatchError,
+    AuthorizationExpiredError,
+)
 from shea.security.service import SecurityService
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 
@@ -297,8 +301,11 @@ class ExecutionService:
             )
 
             auth = self._authorizations.list_by_task(task.id)[-1]
-            auth.used_at = self._clock.now()
-            self._authorizations.save(auth)
+            if auth.used_at is not None:
+                raise AuthorizationAlreadyUsedError(
+                    task_id=task.id,
+                    nonce=auth.nonce or "",
+            )
 
             task = self._orchestrator.advance(
                 task.id, _ADVANCE_EVENT_BY_OUTCOME[result.outcome]
@@ -322,15 +329,9 @@ class ExecutionService:
         # Get the most recent authorization for this task
         authorizations = self._authorizations.list_by_task(task.id)
         if not authorizations:
-            raise MissingDecisionError(task.id)  # Reuse existing exception for now
+            raise MissingDecisionError(task.id)
 
-        # Use the most recent authorization
         auth = authorizations[-1]
-        
-
-        # Check if authorization has been used (replay protection)
-        auth.used_at = self._clock.now()
-        self._authorizations.save(auth)
 
         # Check expiry
         expires_at: datetime | None = None
@@ -343,22 +344,27 @@ class ExecutionService:
         if expires_at is not None and expires_at < self._clock.now():
             raise AuthorizationExpiredError(task_id=task.id, expired_at=expires_at)
 
-        # Get current plan for hash comparison
-        current_plans = self._plans.get_by_task(task.id) if auth.plan_hash else None
+        # Only enforce replay protection for binding-enabled authorizations (with nonce)
+        if auth.nonce is not None and auth.used_at is not None:
+            raise AuthorizationAlreadyUsedError(
+                task_id=task.id,
+                nonce=auth.nonce,
+            )
 
-        # Verify plan hash
-        if auth.plan_hash and current_plans:
-            current_plan_hash = compute_plan_hash(current_plans)
-            if auth.plan_hash != current_plan_hash:
-                raise AuthorizationBindingMismatchError(
-                    task.id, "plan", auth.plan_hash, current_plan_hash
-                )
+        # Verify hashes only if they exist
+        if auth.plan_hash:
+            current_plan = self._plans.get_by_task(task.id)
+            if current_plan:
+                current_plan_hash = compute_plan_hash(current_plan)
+                if auth.plan_hash != current_plan_hash:
+                    raise AuthorizationBindingMismatchError(
+                        task.id, "plan", auth.plan_hash, current_plan_hash
+                    )
 
-        # Verify step hash (if we can determine the current step)
         if auth.step_hash:
-            # Find the step matching the request
-            if current_plans:
-                for step in current_plans.steps:
+            current_plan = self._plans.get_by_task(task.id)
+            if current_plan:
+                for step in current_plan.steps:
                     if step.tool == request.tool:
                         current_step_hash = compute_step_hash(step)
                         if auth.step_hash != current_step_hash:
@@ -367,10 +373,14 @@ class ExecutionService:
                             )
                         break
 
-        # Verify arguments hash
         if auth.arguments_hash:
             current_arguments_hash = compute_arguments_hash(request.arguments)
             if auth.arguments_hash != current_arguments_hash:
                 raise AuthorizationBindingMismatchError(
                     task.id, "arguments", auth.arguments_hash, current_arguments_hash
-                )    
+                )
+
+        # Mark as used only if it has a nonce
+        if auth.nonce is not None:
+            auth.used_at = self._clock.now()
+            self._authorizations.save(auth)               

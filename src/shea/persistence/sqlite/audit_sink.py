@@ -23,30 +23,36 @@ class SqliteAuditSink:
 
     def record(self, event: AuditEvent) -> AuditEvent:
         with self._uow:
+            # Deliberately a single global chain ordered by
+            # sequence_number, not scoped to this event's (request_id,
+            # task_id) — verify_audit_chain() walks the whole table as
+            # one chain, and a per-scope "previous event" lookup here
+            # would silently disagree with that the moment two tasks'
+            # events interleave, which is the normal case in any running
+            # system. Also never honors chain fields already set on the
+            # incoming `event` — a caller (or anything reusing an old
+            # AuditEvent object) supplying its own prev_hash/sequence_
+            # number/event_hash would be trusted blindly, defeating the
+            # whole point of a tamper-evident chain. This method is the
+            # only place these fields are allowed to come from.
             tip = self._conn.execute(
                 "SELECT sequence_number, event_hash FROM audit_events "
-                "WHERE request_id IS ? AND task_id IS ? "
-                "ORDER BY sequence_number DESC LIMIT 1",
-                (event.request_id, event.task_id),
+                "ORDER BY sequence_number DESC LIMIT 1"
             ).fetchone()
-            next_sequence_number = self._conn.execute(
-                "SELECT COALESCE(MAX(sequence_number), 0) + 1 "
-                "FROM audit_events"
-            ).fetchone()[0]
-            if tip is None:
-                sequence_number = event.sequence_number or next_sequence_number
-                prev_hash = event.prev_hash
-            else:
-                sequence_number = event.sequence_number or next_sequence_number
-                prev_hash = event.prev_hash or tip["event_hash"]
 
-            calc_prev_hash = prev_hash if prev_hash is not None else GENESIS_PREV_HASH
-            event_hash = event.event_hash or hash_audit_event(event, calc_prev_hash)
-            
+            if tip is None:
+                sequence_number = 1
+                prev_hash = GENESIS_PREV_HASH
+            else:
+                sequence_number = tip["sequence_number"] + 1
+                prev_hash = tip["event_hash"]
+
+            event_hash = hash_audit_event(event, prev_hash)
+
             event.sequence_number = sequence_number
             event.prev_hash = prev_hash
             event.event_hash = event_hash
-            
+
             self._conn.execute(
                 """
                 INSERT INTO audit_events
@@ -74,5 +80,5 @@ class SqliteAuditSink:
                     "event_hash": event_hash,
                 },
             )
-            
+
             return event
