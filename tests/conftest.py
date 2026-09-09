@@ -226,7 +226,28 @@ def ready_task(orchestrator: Orchestrator) -> Task:
 
 @pytest.fixture
 def tool_registry() -> ToolRegistry:
-    return ToolRegistry()
+    registry = ToolRegistry()
+    # Register some test tools with schemas
+    registry.register_with_schema(
+        name="filesystem.read",
+        capabilities=frozenset({"filesystem.read"}),
+        handler=lambda req: ToolResponse(success=True, data="file content"),
+        description="Read a file",
+        argument_schema={
+            "path": {"type": "string", "required": True, "min_length": 1},
+        },
+    )
+    registry.register_with_schema(
+        name="network.fetch",
+        capabilities=frozenset({"network.connect"}),
+        handler=lambda req: ToolResponse(success=True, data="response"),
+        description="Fetch a URL",
+        argument_schema={
+            "url": {"type": "string", "required": True, "pattern": "^https?://"},
+            "timeout": {"type": "integer", "required": False, "default": 30, "min_value": 1},
+        },
+    )
+    return registry
 
 
 @pytest.fixture
