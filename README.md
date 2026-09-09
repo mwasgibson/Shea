@@ -1,4 +1,4 @@
-# SHEA — Phase 1–7 complete, Phase 8 (Core Hardening) in progress
+# SHEA — Phase 1–8 complete
 
 Phase 1 is the foundation layer (state machine, persistence, contracts,
 config). Phase 2 adds the Decision/Policy/Risk engine — the only
@@ -13,12 +13,14 @@ execution — the constraint layer around the model boundary Phase 5 built.
 Phase 7 adds Provider Routing & Failover — a`ProviderRoutingService` that
 structurally satisfies the `ModelProvider` port itself, so it's a drop-in
 replacement anywhere Phase 5's code expects a single provider, with health-based
-failover underneath. Phase 8 (in progress) hardens what Phases 1-7 built:
-`SecurityService` and a real `ExecutionBoundary` are now mandatory rather
-than optional-by-default, and a wiring gap — `RetryController` and
-`IdempotencyKeyGenerator` built, unit-tested, and never actually called
-from the recovery/execution paths they were built for — has been found
-and fixed. See the Phase 8 review below for the full story.
+failover underneath. Phase 8 (complete) hardens what Phases 1–7 built and closes enforcement
+gaps that were only conventions before: mandatory `SecurityService` on
+execute, no silent unsafe execution, wired retry/idempotency, shared
+`UnitOfWork` for critical write paths, content-bound authorization
+(plan/step/argument hashes, expiry, one-shot nonce), tool argument
+schemas with elevated-capability register gates, and a multi-step
+state-machine foundation (`step_verified` → READY). Next: Phase 9 (first
+real tools under policy), then Phase 10 (multi-step product e2e).
 
 ## What's here
 
@@ -26,17 +28,17 @@ and fixed. See the Phase 8 review below for the full story.
 | --- | --- |
 | `shea.contracts` | Typed, framework-free data shapes: `Request`, `Intent`, `Task`, `Plan`, `PlanStep`, `Decision`, `RiskAssessment`, `Authorization`, `AuditEvent`, `ToolRequest`/`ToolResponse`, `ModelResponse`, `ToolExecutionRecord`, `VerificationRecord`, `RecoveryAttempt`. |
 | `shea.ports` | Abstract interfaces (`TaskRepository`, `PlanRepository`, `IntentRepository`, `DecisionRepository`, `RiskAssessmentRepository`, `AuthorizationRepository`, `ToolExecutionRepository`, `VerificationRepository`, `RecoveryAttemptRepository`, `AuditSink`, `Clock`, `IdGenerator`, `ModelProvider`, `UnitOfWork`) — the hexagonal boundary. Nothing concrete lives here. |
-| `shea.state_machine` | The authoritative task transition table (Appendix A, extended with `execution_unknown`) and `next_state()`, the only function allowed to change a task's state. Illegal transitions raise `IllegalTransitionError` rather than silently succeeding. |
+| `shea.state_machine` | Authoritative transition table (Appendix A, plus `execution_unknown` and `step_verified`) and `next_state()` — the only function allowed to change task state. Illegal transitions raise `IllegalTransitionError`. |
 | `shea.persistence.sqlite` | Concrete adapters implementing the ports above: connection handling, numbered SQL migrations (0001–0006), repositories. SQLite is the source of truth for task/plan state — not an in-memory cache with SQLite as backup. |
 | `shea.config` | The six-layer configuration resolver (System → Machine → User → Profile → Project → Session), with `security_invariant_keys` that can only ever be set at the System layer regardless of what any other layer says. |
 | `shea.core` | The `Orchestrator` — thin coordination of task lifecycle. Creates tasks, advances them via the state machine, attaches plans, persists, and audits every attempt (success *and* rejection). Each state write and its audit event commit or roll back together via a shared `UnitOfWork`, not as two independent commits. |
 | `shea.model` | `ModelProvider` port (`generate()`/`health()`/`capabilities()`) and `ScriptedModelProvider` — a deterministic queued-response double. No real LLM API integration ships here; that's the Provider Routing phase's job. |
 | `shea.understanding` | `DeterministicIntentMatcher` (pure) and `IntentParser` (pure) — research doc Section 6.2's hybrid: known commands matched deterministically, everything else falls back to the model, with `AmbiguousIntentError` for low-confidence output and `MalformedModelOutputError` for unparseable output. |
 | `shea.planning` | `PlanTemplateRegistry` (pure), `validate_plan()` (pure — the "model suggested this" vs "Shea will act on this" boundary), `capabilities_for_plan()` (pure — bridges Planning to Decision), and `PlanningService` — the integration layer, sole caller of `start_planning`/`plan_ready`/`plan_failed`/`block`/`attach_plan`. |
-| `shea.decision` | `PolicyEngine` (deterministic capability rules), `RiskEngine` (factor-based classification + explanation), confirmation-tier rules, and `DecisionService` — the only subsystem allowed to call `Orchestrator.advance(task_id, "authorize_and_run")`. |
-| `shea.tools` | `ToolDeclaration` + `ToolRegistry` (capability profiles, no authorization logic) and `ToolExecutor` (the capability gate — checks required vs. authorized capabilities *before* the handler is ever looked up, and distinguishes SUCCESS/FAILURE/UNKNOWN outcomes). |
-| `shea.execution` | `ExecutionService` — looks up a task's authorized capabilities from the persisted `Decision` (never from a caller-supplied value), runs one tool call through `ToolExecutor`, persists a `ToolExecutionRecord`, and advances the orchestrator based on the outcome. Requires a `SecurityService` and, before every attempt, checks an `IdempotencyKeyGenerator`-derived key against prior executions — a prior SUCCESS/UNKNOWN raises `DuplicateExecutionSuppressedError` instead of re-invoking the handler. |
-| `shea.verification` | `Verifier`/`VerifierRegistry` (per-tool, mirrors `ToolRegistry`) and `VerificationService` — the only caller of `Orchestrator.advance(task_id, "verified" \| "verification_failed")`. Independently decides whether a tool's claimed success actually happened; a tool reporting success does not force verification to agree. |
+| `shea.decision` | `PolicyEngine`, `RiskEngine`, confirmation-tier rules, and `DecisionService` — sole caller of `authorize_and_run`; issues content-bound `Authorization` records (plan/step/argument hashes, expiry, nonce) when a plan is present. |
+| `shea.tools` | `ToolDeclaration` + `ToolRegistry` (capability profiles; optional `argument_schema`; elevated capabilities require a schema at register) and `ToolExecutor` (capability gate *before* handler lookup, schema validation when declared, SUCCESS/FAILURE/UNKNOWN outcomes). |
+| `shea.execution` | `ExecutionService` — looks up authorized capabilities from the persisted `Decision`, verifies authorization content-binding, requires `SecurityService`, enforces idempotency (SUCCESS/UNKNOWN suppress), runs one tool call through `ToolExecutor`, persists `ToolExecutionRecord`, advances by outcome. `PlanRunner` walks multi-step plans with per-step binding (product multi-step is Phase 10). |
+| `shea.verification` | `Verifier`/`VerifierRegistry` and `VerificationService` — sole caller of `verified` / `verification_failed` / `step_verified` (intermediate steps return to READY for the next authorization). Execution success does not force verification to agree. |
 | `shea.recovery` | `Compensator` abstraction + `RecoveryService` — bounded Saga-style retry (`FAILED -> RECOVERING -> READY \| FAILED`), counted from persisted attempts, and `resolve_blocked()` for tasks Phase 3's `UNKNOWN` execution outcome routes to `BLOCKED`. `RetryController` is the single source of truth for the attempt budget and supplies the backoff delay persisted on each `RecoveryAttempt`. |
 | `shea.security` | `NetworkPolicy`/`FilesystemPolicy` (SSRF and path-scope protection, pure), `SecretRedactor` (pattern-based, recursive), `PromptInjectionDetector` (heuristic), `SecurityGate` (pure pre-execution request scanner), `SecurityService` — the only caller of `Orchestrator.advance(task_id, "security_halt")`; its violation path (violation audit -> task halt -> transition audit) commits or rolls back as one transaction. Also `SandboxedExecutionBoundary` — the real "Sandbox" pipeline stage (timeout + redaction). |
 | `shea.provider` | `ProviderProfile`/`ProviderTrustLevel` (LOCAL/TRUSTED_REMOTE/UNTRUSTED), `HealthTracker` (sliding-window health), `FailureCategory`/`classify_exception()`, `ProviderRouter` (pure eligibility + ranking), `ProviderRoutingService` — structurally satisfies `ModelProvider` itself, so it's a drop-in for `IntentParser`/`PlanningService`. |
@@ -149,65 +151,35 @@ never be satisfied by a remote provider, not even as a failover when no
 local provider exists at all (research doc Section 8.11's exact scenario,
 proven directly in `test_require_local_only_never_fails_over_to_remote`).
 
-Phase 8 hardens what the prior phases built rather than adding a new
-subsystem. Two changes so far: `ExecutionService.security_service`
-(`shea/execution/service.py`) is now a required constructor argument —
-Phases 1-7 defaulted it to `None`, which made security enforcement a
-convention a caller could forget rather than a mechanical guarantee.
-And `RecoveryService`/`ExecutionService` now actually call
-`RetryController`/`IdempotencyKeyGenerator` (`shea/recovery/retry.py`,
-`shea/recovery/idempotency.py`) — both classes existed and were
-unit-tested from an earlier session, but nothing in the recovery or
-execution path ever called them, the same class of gap Phase 6 found in
-`SecurityGate`. `RecoveryService.begin_recovery()` previously enforced
-its own `attempt_number > max_attempts` check and never computed a
-backoff delay at all; it now asks `RetryController` for both, and the
-delay is persisted on `RecoveryAttempt.delay_seconds` (migration 0006)
-rather than computed and thrown away.
-`ExecutionService.execute()` now computes an idempotency key from
-(task, tool, action, arguments) before every attempt and checks it via
-`ToolExecutionRepository.get_by_idempotency_key()` — a prior SUCCESS or
-UNKNOWN for that key raises `DuplicateExecutionSuppressedError` instead
-of re-invoking the handler, closing the exact gap research doc Section
-8.15 names: "Provider retry must not automatically imply tool
-re-execution." A prior FAILURE is deliberately not suppressed, since no
-side effect is claimed to have occurred.
+Phase 8 hardens what the prior phases built and enforces properties that
+were previously only documented.
 
-A third change closes a related gap: `Orchestrator.advance()` (and
-`create_task()`/`attach_plan()`) wrote a task's new state and recorded
-the audit event for that transition as two independently-committed
-writes — `SqliteTaskRepository.save()` and `SqliteAuditSink.record()`
-each called `commit()` on their own. A crash between the two left a
-state change durably persisted with no audit trail for it.
-`SecurityService.enforce()`'s violation path was worse: three
-independently-committed writes (violation audit, task halt, transition
-audit). A new `UnitOfWork` port (`shea/ports/unit_of_work.py`) and
-re-entrant `SqliteUnitOfWork` adapter
-(`shea/persistence/sqlite/unit_of_work.py`) fix this — nested `with`
-blocks share one transaction, and only the outermost one commits or
-rolls back, so `Orchestrator` and `SecurityService` now wrap their write
-sequences in the same shared instance also given to
-`SqliteTaskRepository`/`SqliteAuditSink`, and the whole sequence commits
-or rolls back together. Proven with tests that force a failure
-mid-transaction and query the database directly to confirm the earlier
-write was rolled back too (`test_advance_rolls_back_task_state_when_
-audit_write_fails`, `test_violation_path_rolls_back_everything_if_
-halt_transition_fails`), not just tests that assert the happy path still
-works. Scope note: this covers Task + Audit writes specifically — other
-repositories (recovery attempts, tool executions, decisions) still
-self-commit independently and are not yet part of any cross-repository
-atomicity guarantee.
+**Hardening:** `ExecutionService.security_service` is a required constructor
+argument — there is no execute path without `SecurityService.enforce()`.
+`ToolExecutor` requires a real `ExecutionBoundary` or explicit
+`allow_unsafe_execution=True` (`UnsafeExecutionNotAllowedError`).
+`RecoveryService` uses `RetryController` for attempt budget and backoff
+(delay persisted on `RecoveryAttempt.delay_seconds`). `ExecutionService`
+computes an idempotency key from (task, tool, action, arguments) and
+suppresses re-invocation after a prior SUCCESS or UNKNOWN
+(`DuplicateExecutionSuppressedError`); prior FAILURE is not suppressed.
+A shared re-entrant `UnitOfWork` makes task/audit and other paired
+repository+audit writes atomic. CI runs pytest, mypy, and ruff on every
+push/PR to `main`.
 
-A fourth change: `.github/workflows/ci.yml` now runs `pytest`, `mypy`,
-and `ruff check .` on every push and pull request against `main`. Every
-verification claim in this README up to this point ("294/294 passing",
-"mypy --strict clean") had depended entirely on whoever made the change
-actually running those commands locally before committing — there was
-nothing stopping a regression from landing silently. There isn't
-anything sophisticated about the workflow; it installs the package with
-`pip install -e ".[dev]"` on Python 3.11 (the floor of `pyproject.toml`'s
-`requires-python`) and runs the same three commands documented
-throughout this README.
+**Enforcement:** Authorizations are content-bound (`plan_hash`, `step_hash`,
+`arguments_hash`, `expires_at`, `nonce`, `used_at`). Decision binds when a
+plan exists; execution verifies binding before the tool runs and sets
+`used_at` only after durable SUCCESS. Tools may declare an
+`argument_schema`; elevated capabilities cannot register without one.
+The state machine adds `step_verified` (VERIFYING → READY) so intermediate
+plan steps must pass `authorize_and_run` again; final steps still use
+`verified` → COMPLETED. `PlanRunner` orchestrates the multi-step loop;
+durable step status and full multi-step e2e are Phase 10.
+
+**Next:** Phase 9 — first real tools (`filesystem.read` / `write` under
+policy with runtime path checks and real verifiers). Phase 10 — multi-step
+productization on top of those tools.
 
 ## What's deliberately NOT here yet
 
@@ -218,8 +190,8 @@ throughout this README.
   content, not runtime behavior — DNS rebinding and symlink-based path
   escapes are documented, explicit gaps requiring real network
   resolution / OS-level realpath checks at actual access time
-- Multi-step plan execution (`ExecutionService` runs one tool call per
-  invocation; looping over a `Plan`'s steps is Orchestration's job)
+- Multi-step plan *product* finish (SM + `PlanRunner` + `step_verified`
+  exist; durable step state and 2+ step e2e are Phase 10)
 - Real per-tool Verifiers and Compensators — Phase 4 provides the
   abstractions and honest fallbacks; registering an actual independent
   check for a given tool is that tool's job when it's built
@@ -263,37 +235,26 @@ ruff check .            # lint
 
 ```text
 src/shea/
-├── contracts/          # pure data: enums.py, models.py
-├── ports/               # abstract interfaces (hexagonal boundary)
-│   ├── clock.py
-│   ├── execution_boundary.py
-│   ├── id_generator.py
-│   ├── model_provider.py
-│   ├── redactor.py
-│   └── repositories.py
-├── state_machine/       # transition table + validator
-├── persistence/sqlite/
-│   ├── migrations/      # 0001_initial ... 0005_intents
-│   └── *.py             # one repository adapter per entity
-├── config/               # layered resolver + security invariants
-├── core/                 # Orchestrator
-├── model/                 # ModelProvider port + ScriptedModelProvider
-├── understanding/          # DeterministicIntentMatcher, IntentParser
-├── planning/               # PlanTemplateRegistry, validator, capabilities, PlanningService
-├── decision/               # PolicyEngine, RiskEngine, confirmation rules, DecisionService
-├── tools/                   # ToolRegistry, ToolExecutor, UnsafeExecutionBoundary
-├── execution/                # ExecutionService
-├── verification/              # Verifier, VerifierRegistry, VerificationService
-├── recovery/                   # Checkpoint, Classifier, Compensator, Idempotency, Planner, Retry, RecoveryService, Startup
-├── security/                    # NetworkPolicy, FilesystemPolicy, SecretRedactor,
-│                                 # PromptInjectionDetector, SecurityGate,
-│                                 # SandboxedExecutionBoundary, SecurityService
-├── provider/                      # ProviderProfile, HealthTracker, FailureCategory,
-│                                   # ProviderRouter, ProviderRoutingService
-├── audit/                          # AuditRecorder
-└── adapters/                        # concrete Clock / IdGenerator
+├── contracts/          # pure data shapes
+├── ports/              # hexagonal interfaces (incl. UnitOfWork)
+├── state_machine/      # TRANSITIONS + next_state()
+├── persistence/sqlite/ # migrations + repositories
+├── config/             # six-layer resolver
+├── core/               # Orchestrator
+├── model/              # ModelProvider + ScriptedModelProvider
+├── understanding/      # DeterministicIntentMatcher + IntentParser
+├── planning/           # templates, validate_plan, PlanningService
+├── decision/           # Policy, Risk, DecisionService
+├── tools/              # Registry, Executor, schemas, boundary
+├── execution/          # ExecutionService, PlanRunner
+├── verification/       # Verifier registry + VerificationService
+├── recovery/           # Retry, Idempotency, RecoveryService
+├── security/           # Gate, policies, sandbox, SecurityService
+├── provider/           # Routing + failover
+├── audit/              # AuditRecorder
+└── adapters/           # concrete Clock / IdGenerator
 
 tests/
-├── unit/                 # one file per subsystem + capstone end-to-end test
-└── property/              # Hypothesis-based invariant tests
+├── unit/
+└── property/
 ```
