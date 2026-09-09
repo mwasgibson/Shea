@@ -23,6 +23,7 @@ from .schema import (
     integer_arg,
     string_arg,
 )
+from shea.tools.provider import ToolProvider, load_tools
 
 __all__ = [
     "UnsafeExecutionBoundary",
@@ -44,4 +45,6 @@ __all__ = [
     "enum_arg",
     "integer_arg",
     "string_arg",
+    "ToolProvider",
+    "load_tools",
 ]
