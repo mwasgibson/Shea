@@ -12,6 +12,7 @@ from shea.tools.executor import (
 )
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 
+from tests.helper import MINIMAL_SCHEMA
 
 def make_request(tool: str = "test.tool") -> ToolRequest:
     return ToolRequest(request_id="req-1", tool=tool, action="do_thing")
@@ -26,8 +27,12 @@ def test_authorized_call_reaches_handler_and_returns_success() -> None:
 
     registry = ToolRegistry()
     registry.register(
-        ToolDeclaration(name="test.tool", capabilities=frozenset({"network.connect"})),
-        handler,
+        ToolDeclaration(
+            name="test.tool", 
+            capabilities=frozenset({"network.connect"}),
+            argument_schema=MINIMAL_SCHEMA,
+        ),
+        handler, 
     )
     executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
@@ -54,7 +59,11 @@ def test_unauthorized_capability_never_reaches_handler() -> None:
 
     registry = ToolRegistry()
     registry.register(
-        ToolDeclaration(name="test.tool", capabilities=frozenset({"credential.access"})),
+        ToolDeclaration(
+            name="test.tool", 
+            capabilities=frozenset({"credential.access"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ),
         handler,
     )
     executor = ToolExecutor(registry, allow_unsafe_execution=True)
@@ -79,7 +88,9 @@ def test_partial_capability_authorization_still_blocks() -> None:
     registry = ToolRegistry()
     registry.register(
         ToolDeclaration(
-            name="test.tool", capabilities=frozenset({"network.connect", "filesystem.write"})
+            name="test.tool", 
+            capabilities=frozenset({"network.connect", "filesystem.write"}),
+            argument_schema=MINIMAL_SCHEMA,
         ),
         handler,
     )
@@ -99,7 +110,11 @@ def test_handler_returning_success_false_is_failure_outcome() -> None:
         return ToolResponse(success=False, error="tool-reported failure")
 
     registry = ToolRegistry()
-    registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
+    registry.register(ToolDeclaration(
+        name="test.tool", 
+        capabilities=frozenset(),
+        argument_schema=MINIMAL_SCHEMA,
+        ), handler)
     executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     result = executor.execute(make_request(), authorized_capabilities=frozenset())
@@ -113,7 +128,11 @@ def test_unexpected_exception_is_failure_outcome_not_unknown() -> None:
         raise ValueError("boom")
 
     registry = ToolRegistry()
-    registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
+    registry.register(ToolDeclaration(
+        name="test.tool", 
+        capabilities=frozenset(),
+        argument_schema=MINIMAL_SCHEMA,
+        ), handler)
     executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     result = executor.execute(make_request(), authorized_capabilities=frozenset())
@@ -132,7 +151,11 @@ def test_unknown_outcome_error_is_unknown_not_failure() -> None:
         raise UnknownOutcomeError("connection dropped after send, before confirmation")
 
     registry = ToolRegistry()
-    registry.register(ToolDeclaration(name="test.tool", capabilities=frozenset()), handler)
+    registry.register(ToolDeclaration(
+        name="test.tool", 
+        capabilities=frozenset(),
+        argument_schema=MINIMAL_SCHEMA,
+        ), handler)
     executor = ToolExecutor(registry, allow_unsafe_execution=True)
 
     result = executor.execute(make_request(), authorized_capabilities=frozenset())

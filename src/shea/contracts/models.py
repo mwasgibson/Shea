@@ -54,7 +54,7 @@ class PlanStep:
     plan_id: str
     order: int
     description: str
-    tool: str | None = None
+    tool: str
     arguments: dict[str, Any] = field(default_factory=dict[str, Any])
     state: str = "PENDING"
 

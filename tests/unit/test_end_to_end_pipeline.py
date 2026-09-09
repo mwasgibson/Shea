@@ -26,6 +26,8 @@ from shea.understanding.deterministic import (
 )
 from shea.verification.service import VerificationService
 
+from tests.helper import MINIMAL_SCHEMA
+
 
 def test_full_pipeline_from_raw_text_to_completed(
     planning_service: PlanningService,
@@ -82,7 +84,11 @@ def test_full_pipeline_from_raw_text_to_completed(
         return ToolResponse(success=True, data={"forecast": "sunny"})
 
     tool_registry.register(
-        ToolDeclaration(name="weather", capabilities=frozenset({"network.connect"})),
+        ToolDeclaration(
+            name="weather",
+            capabilities=frozenset({"network.connect"}),
+            argument_schema=MINIMAL_SCHEMA,
+        ),
         weather_handler,
     )
     deterministic_matcher.register(
@@ -102,7 +108,13 @@ def test_full_pipeline_from_raw_text_to_completed(
     assert capabilities == frozenset({"network.connect"})
 
     decision_outcome = decision_service.evaluate_and_authorize(
-        planning_outcome.task, capabilities=capabilities
+        planning_outcome.task,
+        capabilities=capabilities,
+        plan=planning_outcome.plan,
+        step=planning_outcome.plan.steps[0] if planning_outcome.plan.steps else None,
+        arguments=dict(planning_outcome.plan.steps[0].arguments)
+        if planning_outcome.plan.steps
+        else None,
     )
     assert decision_outcome.task.state == TaskState.RUNNING
 
@@ -187,7 +199,11 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
         return ToolResponse(success=False, error="deliberate failure",)
 
     tool_registry.register(
-        ToolDeclaration(name="weather_recovery", capabilities=frozenset({"network.connect"})),
+        ToolDeclaration(
+            name="weather_recovery",
+            capabilities=frozenset({"network.connect"}),
+            argument_schema=MINIMAL_SCHEMA,
+        ),
         weather_handler,
     )
     deterministic_matcher.register(
@@ -212,7 +228,13 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     assert capabilities == frozenset({"network.connect"})
 
     decision_outcome = decision_service.evaluate_and_authorize(
-        planning_outcome.task, capabilities=capabilities,
+        planning_outcome.task,
+        capabilities=capabilities,
+        plan=planning_outcome.plan,
+        step=planning_outcome.plan.steps[0] if planning_outcome.plan.steps else None,
+        arguments=dict(planning_outcome.plan.steps[0].arguments)
+        if planning_outcome.plan.steps
+        else None,
     )
     assert decision_outcome.task.state == TaskState.RUNNING
 

@@ -26,6 +26,34 @@ def test_happy_path_reaches_completed() -> None:
     assert state == TaskState.COMPLETED
 
 
+def test_step_verified_returns_to_ready_for_next_step() -> None:
+    """Multi-step: an intermediate verification must not complete the task.
+
+    VERIFYING --step_verified--> READY so the next step is forced through
+    authorize_and_run again (per-step binding).
+    """
+    state = TaskState.CREATED
+    for event in [
+        "start_planning",
+        "plan_ready",
+        "authorize_and_run",
+        "execution_complete",
+        "step_verified",
+    ]:
+        state = next_state(state, event)
+    assert state == TaskState.READY
+    # And RUNNING is still only reachable via authorize_and_run
+    state = next_state(state, "authorize_and_run")
+    assert state == TaskState.RUNNING
+
+
+def test_step_verified_not_valid_from_other_states() -> None:
+    for state in TaskState:
+        if state is TaskState.VERIFYING:
+            continue
+        assert validate_transition(state, "step_verified") is False
+
+
 @pytest.mark.parametrize(
     "state,event",
     [

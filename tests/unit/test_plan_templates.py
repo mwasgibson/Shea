@@ -10,6 +10,8 @@ from shea.planning.validator import validate_plan
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 from shea.understanding.deterministic import IntentDraft
 
+from tests.helper import MINIMAL_SCHEMA
+
 
 def _noop_handler(request: ToolRequest) -> ToolResponse:
     return ToolResponse(success=True)
@@ -72,7 +74,11 @@ def test_validate_plan_rejects_unregistered_tool() -> None:
 
 def test_validate_plan_accepts_well_formed_plan() -> None:
     registry = ToolRegistry()
-    registry.register(ToolDeclaration(name="echo", capabilities=frozenset()), _noop_handler)
+    registry.register(ToolDeclaration(
+        name="echo", 
+        capabilities=frozenset(),
+        argument_schema=MINIMAL_SCHEMA,
+        ), _noop_handler)
     plan = make_plan(
         [PlanStep(id="step-1", plan_id="plan-1", order=0, description="x", tool="echo")]
     )
@@ -83,10 +89,18 @@ def test_validate_plan_accepts_well_formed_plan() -> None:
 def test_capabilities_for_plan_unions_across_steps() -> None:
     registry = ToolRegistry()
     registry.register(
-        ToolDeclaration(name="a", capabilities=frozenset({"network.connect"})), _noop_handler
+        ToolDeclaration(
+            name="a", 
+            capabilities=frozenset({"network.connect"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ), _noop_handler
     )
     registry.register(
-        ToolDeclaration(name="b", capabilities=frozenset({"filesystem.write"})), _noop_handler
+        ToolDeclaration(
+            name="b", 
+            capabilities=frozenset({"filesystem.write"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ), _noop_handler
     )
     plan = make_plan(
         [

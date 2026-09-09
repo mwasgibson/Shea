@@ -50,6 +50,7 @@ TRANSITIONS: dict[TaskState, dict[str, TaskState]] = {
     },
     TaskState.VERIFYING: {
         "verified": TaskState.COMPLETED,
+        "step_verified": TaskState.READY,
         "verification_failed": TaskState.FAILED,
     },
     TaskState.FAILED: {

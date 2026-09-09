@@ -8,6 +8,8 @@ from shea.contracts.models import ToolRequest, ToolResponse
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry
 
+from tests.helper import MINIMAL_SCHEMA
+
 capability_pool = st.sampled_from(
     [
         "filesystem.read",
@@ -39,7 +41,11 @@ def test_handler_invoked_iff_required_is_subset_of_authorized(
         return ToolResponse(success=True)
 
     registry = ToolRegistry()
-    registry.register(ToolDeclaration(name="tool", capabilities=required), handler)
+    registry.register(ToolDeclaration(
+        name="tool", 
+        capabilities=required,
+        argument_schema=MINIMAL_SCHEMA,
+        ), handler)
     executor = ToolExecutor(registry, allow_unsafe_execution=True)
     request = ToolRequest(request_id="req-1", tool="tool", action="do_thing")
 

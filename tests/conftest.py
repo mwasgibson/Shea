@@ -33,6 +33,7 @@ from shea.planning.service import PlanningService
 from shea.planning.templates import PlanTemplateRegistry
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
+from shea.ports.repositories import PlanRepository
 from shea.recovery.service import RecoveryService
 from shea.security.filesystem_policy import FilesystemPolicy
 from shea.security.gate import SecurityGate
@@ -193,6 +194,7 @@ def decision_service(
     decision_repository: SqliteDecisionRepository,
     risk_assessment_repository: SqliteRiskAssessmentRepository,
     authorization_repository: SqliteAuthorizationRepository,
+    plan_repository: PlanRepository,
     audit_recorder: AuditRecorder,
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
@@ -205,6 +207,7 @@ def decision_service(
         decision_repository=decision_repository,
         risk_repository=risk_assessment_repository,
         authorization_repository=authorization_repository,
+        plan_repository=plan_repository,
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,

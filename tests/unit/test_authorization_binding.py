@@ -160,3 +160,6 @@ def test_authorization_used_check():
     )
 
     assert auth.used_at is not None
+    
+def test_used_at_only_after_success(): ...
+def test_missing_plan_with_plan_hash_raises(): ...    

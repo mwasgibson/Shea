@@ -79,7 +79,12 @@ class VerificationService:
         self._ids = id_generator
         self._uow = unit_of_work
 
-    def verify(self, task: Task) -> VerificationResult:
+    def verify(
+        self, 
+        task: Task,
+        *,
+        more_steps: bool = False,
+    ) -> VerificationResult:
         if task.state is not TaskState.VERIFYING:
             raise TaskNotVerifyingError(task.id, task.state)
 
@@ -113,7 +118,12 @@ class VerificationService:
                 metadata={"method": outcome.method, "tool": record.tool},
             )
 
-            event = "verified" if outcome.verified else "verification_failed"
+            if not outcome.verified:
+                event = "verification_failed"
+            elif more_steps:
+                event = "step_verified"
+            else:
+                event = "verified"
             advanced_task = self._orchestrator.advance(task.id, event)
 
         return VerificationResult(verification=verification, task=advanced_task)

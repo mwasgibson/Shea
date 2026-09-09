@@ -57,12 +57,14 @@ class SecurityService:
         orchestrator: Orchestrator,
         audit: AuditRecorder,
         unit_of_work: UnitOfWork,
+        halt_on_injection: bool = False
     ) -> None:
         self._gate = gate
         self._injection_detector = injection_detector
         self._orchestrator = orchestrator
         self._audit = audit
         self._uow = unit_of_work
+        self._halt_on_injection = halt_on_injection
 
     def enforce(self, task: Task, request: ToolRequest) -> None:
         if task.state is not TaskState.RUNNING:
@@ -106,19 +108,29 @@ class SecurityService:
         result = self._injection_detector.scan(text)
 
         if result.flagged:
+            severity = "HIGH" if self._halt_on_injection else "MEDIUM"
             self._audit.record(
                 actor="security_service",
                 component="security.injection_detection",
                 event_type="security.prompt_injection_detected",
                 action="scan_output",
-                result="flagged",
+                result="halted" if self._halt_on_injection else "flagged",
                 request_id=task.request_id,
                 task_id=task.id,
                 metadata={
                     "tool": tool_name,
                     "matched_phrases": list(result.matched_phrases),
-                    "severity": "MEDIUM",
+                    "severity": severity,
+                    "quarantined": True,
                 },
             )
+            if self._halt_on_injection:
+                with self._uow:
+                    self._orchestrator.advance(task.id, "security_halt")
+                raise SecurityViolationError(
+                    tool_name,
+                    "prompt_injection",
+                    f"injection patterns in tool output: {list(result.matched_phrases)}",
+                )               
 
         return result

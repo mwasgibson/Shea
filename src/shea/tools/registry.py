@@ -10,6 +10,17 @@ from shea.tools.schema import ToolSchema
 
 ToolHandler = Callable[[ToolRequest], ToolResponse]
 
+ELEVATED_CAPABILITIES: frozenset[str] = frozenset(
+    {
+        "filesystem.write",
+        "filesystem.delete",
+        "process.execute",
+        "shell.execute",
+        "credential.access",
+        "network.connect",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ToolDeclaration:
@@ -45,6 +56,16 @@ class ToolAlreadyRegisteredError(Exception):
         super().__init__(f"A tool named {name!r} is already registered")
 
 
+class SchemaRequiredError(Exception):
+    def __init__(self, tool_name: str, capabilities: frozenset[str]) -> None:
+        self.tool_name = tool_name
+        self.capabilities = capabilities
+        super().__init__(
+            f"Tool {tool_name!r} declares elevated capabilities "
+            f"{sorted(capabilities)} and must provide argument_schema"
+        )                
+
+
 class ToolRegistry:
     """Technical doc Component: Tool Registry ("Defines available tools
     and capabilities").
@@ -61,6 +82,11 @@ class ToolRegistry:
     def register(self, declaration: ToolDeclaration, handler: ToolHandler) -> None:
         if declaration.name in self._tools:
             raise ToolAlreadyRegisteredError(declaration.name)
+
+        elevated = declaration.capabilities & ELEVATED_CAPABILITIES
+        if elevated and declaration.argument_schema is None:
+            raise SchemaRequiredError(declaration.name, elevated)
+
         self._tools[declaration.name] = (declaration, handler)
 
     def get_declaration(self, name: str) -> ToolDeclaration:

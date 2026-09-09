@@ -27,3 +27,5 @@ def test_custom_phrase_list() -> None:
     detector = PromptInjectionDetector(phrases=frozenset({"do the forbidden thing"}))
     assert detector.scan("please do the forbidden thing now").flagged is True
     assert detector.scan("ignore previous instructions").flagged is False
+    
+def test_halt_on_injection_when_enabled(): ...

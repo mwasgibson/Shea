@@ -25,7 +25,9 @@ from shea.ports.repositories import (
 from shea.security.service import SecurityService
 from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
 from shea.tools.registry import ToolDeclaration, ToolRegistry
-from tests.unit.test_orchestrator import _RaisingAuditSink  # pyright: ignore[reportPrivateUsage]
+
+from tests.unit.test_orchestrator import _RaisingAuditSink # pyright: ignore[reportPrivateUsage]
+from tests.helper import MINIMAL_SCHEMA
 
 
 def test_execute_on_non_running_task_raises(
@@ -48,7 +50,11 @@ def test_execute_without_decision_raises(
     Decision anyway rather than trusting that invariant blindly.
     """
     tool_registry.register(
-        ToolDeclaration(name="weather", capabilities=frozenset({"weather.lookup"})),
+        ToolDeclaration(
+            name="weather", 
+            capabilities=frozenset({"weather.lookup"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ),
         lambda req: ToolResponse(success=True, data={}),
     )
     request = _make_request()
@@ -71,7 +77,11 @@ def test_execute_success_advances_task_to_verifying(
         return ToolResponse(success=True, data={"result": "ok"})
 
     tool_registry.register(
-        ToolDeclaration(name="echo", capabilities=frozenset({"weather.lookup"})), handler
+        ToolDeclaration(
+            name="echo", 
+            capabilities=frozenset({"weather.lookup"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ), handler
     )
     request = _make_request(tool="echo", action="lookup")
     result = execution_service.execute(running_task, request)
@@ -89,7 +99,11 @@ def test_execute_failure_advances_task_to_failed(
         return ToolResponse(success=False, error="deliberate failure")
 
     tool_registry.register(
-        ToolDeclaration(name="fail", capabilities=frozenset({"weather.lookup"})), handler
+        ToolDeclaration(
+            name="fail", 
+            capabilities=frozenset({"weather.lookup"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ), handler
     )
     request = _make_request(tool="fail", action="do_thing")
     result = execution_service.execute(running_task, request)
@@ -112,7 +126,11 @@ def test_execute_unknown_outcome_advances_task_to_blocked(
         raise TimeoutError("simulated timeout")
 
     tool_registry.register(
-        ToolDeclaration(name="slow", capabilities=frozenset({"weather.lookup"})),
+        ToolDeclaration(
+            name="slow", 
+            capabilities=frozenset({"weather.lookup"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ),
         unknown_handler,
     )
     request = _make_request(tool="slow", action="timeout")
@@ -141,7 +159,11 @@ def test_capability_denied_is_audited(
         return ToolResponse(success=True, data={})
 
     tool_registry.register(
-        ToolDeclaration(name="secret", capabilities=frozenset({"credential.access"})),
+        ToolDeclaration(
+            name="secret", 
+            capabilities=frozenset({"credential.access"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ),
         denied_handler,
     )
     request = _make_request(tool="secret", action="read")
@@ -166,7 +188,11 @@ def test_execution_record_is_persisted(
         return ToolResponse(success=True, data={"result": "ok"})
 
     tool_registry.register(
-        ToolDeclaration(name="echo", capabilities=frozenset({"weather.lookup"})), handler
+        ToolDeclaration(
+            name="echo", 
+            capabilities=frozenset({"weather.lookup"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ), handler
     )
     request = _make_request(tool="echo", action="lookup")
     execution_service.execute(running_task, request)
@@ -198,7 +224,11 @@ def test_execution_service_transaction_rolls_back_on_audit_failure(
         return ToolResponse(success=True, data={"result": "ok"})
 
     tool_registry.register(
-        ToolDeclaration(name="echo", capabilities=frozenset({"weather.lookup"})), handler
+        ToolDeclaration(
+            name="echo", 
+            capabilities=frozenset({"weather.lookup"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ), handler
     )
     request = _make_request(tool="echo", action="lookup")
 

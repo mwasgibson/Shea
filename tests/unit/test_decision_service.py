@@ -18,6 +18,7 @@ from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentReposito
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
+from shea.ports.repositories import PlanRepository
 from tests.unit.test_orchestrator import _RaisingAuditSink  # pyright: ignore[reportPrivateUsage]​
 
 
@@ -65,7 +66,7 @@ def test_high_risk_without_ack_blocks_and_does_not_advance_task(
         )
 
     assert exc_info.value.decision.risk.value == "HIGH"
-    # Task must remain exactly where it was  no partial advancement.
+    # Task must remain exactly where it was - no partial advancement.
     unchanged = orchestrator.get_task(ready_task.id)
     assert unchanged.state == TaskState.READY
 
@@ -97,6 +98,7 @@ def denying_decision_service(
     decision_repository: SqliteDecisionRepository,
     risk_assessment_repository: SqliteRiskAssessmentRepository,
     authorization_repository: SqliteAuthorizationRepository,
+    plan_repository: PlanRepository,
     unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     clock: Clock,
@@ -114,6 +116,7 @@ def denying_decision_service(
         decision_repository=decision_repository,
         risk_repository=risk_assessment_repository,
         authorization_repository=authorization_repository,
+        plan_repository=plan_repository,
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,
@@ -231,6 +234,7 @@ def test_decision_service_transaction_rolls_back_on_audit_failure(
     decision_repository: SqliteDecisionRepository,
     risk_assessment_repository: SqliteRiskAssessmentRepository,
     authorization_repository: SqliteAuthorizationRepository,
+    plan_repository: PlanRepository,
     clock: Clock,
     id_generator: IdGenerator,
     orchestrator: Orchestrator,
@@ -253,6 +257,7 @@ def test_decision_service_transaction_rolls_back_on_audit_failure(
         decision_repository=decision_repository,
         risk_repository=risk_assessment_repository,
         authorization_repository=authorization_repository,
+        plan_repository=plan_repository,
         audit=broken_audit,
         clock=clock,
         id_generator=id_generator,

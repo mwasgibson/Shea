@@ -22,6 +22,8 @@ from shea.tools.registry import ToolDeclaration, ToolRegistry
 from shea.understanding.deterministic import DeterministicIntentMatcher, IntentDraft
 from shea.understanding.exceptions import AmbiguousIntentError
 
+from tests.helper import MINIMAL_SCHEMA
+
 
 def _never_called_handler(request: ToolRequest) -> ToolResponse:
     raise AssertionError("handler should never be invoked during planning")
@@ -29,7 +31,11 @@ def _never_called_handler(request: ToolRequest) -> ToolResponse:
 
 def register_weather_tool(tool_registry: ToolRegistry) -> None:
     tool_registry.register(
-        ToolDeclaration(name="weather", capabilities=frozenset({"network.connect"})),
+        ToolDeclaration(
+            name="weather", 
+            capabilities=frozenset({"network.connect"}),
+            argument_schema=MINIMAL_SCHEMA,
+            ),
         _never_called_handler,
     )
 

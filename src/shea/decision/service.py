@@ -13,6 +13,7 @@ from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import (
     AuthorizationRepository,
     DecisionRepository,
+    PlanRepository,
     RiskAssessmentRepository,
 )
 from shea.ports.unit_of_work import UnitOfWork
@@ -93,6 +94,7 @@ class DecisionService:
         decision_repository: DecisionRepository,
         risk_repository: RiskAssessmentRepository,
         authorization_repository: AuthorizationRepository,
+        plan_repository: PlanRepository,
         audit: AuditRecorder,
         clock: Clock,
         id_generator: IdGenerator,
@@ -104,6 +106,7 @@ class DecisionService:
         self._decisions = decision_repository
         self._risk_assessments = risk_repository
         self._authorizations = authorization_repository
+        self._plans = plan_repository
         self._audit = audit
         self._clock = clock
         self._ids = id_generator
@@ -240,66 +243,55 @@ class DecisionService:
         step: PlanStep | None = None,
         arguments: dict[str, Any] | None = None,
     ) -> Authorization:
+        resolved_plan = plan
+        if resolved_plan is None and task.plan_id is not None:
+            resolved_plan = self._plans.get_by_task(task.id)
+        
         # Compute binding hashes if plan/step/arguments are provided
         plan_hash = None
         step_hash = None
         arguments_hash = None
         nonce = None
 
-        if plan is not None:
-            plan_hash = compute_plan_hash(plan)
-            if step is not None:
-                step_hash = compute_step_hash(step)
-            if arguments is not None:
-                arguments_hash = compute_arguments_hash(arguments)
-                nonce = generate_nonce()
+        if resolved_plan is not None:
+            plan_hash = compute_plan_hash(resolved_plan)
+            resolved_step = step
+            if resolved_step is None and resolved_plan.steps:
+                resolved_step = resolved_plan.steps[0]
+            if resolved_step is not None:
+                step_hash = compute_step_hash(resolved_step)
+                resolved_args = (
+                    arguments if arguments is not None else dict(resolved_step.arguments)
+                )
+                arguments_hash = compute_arguments_hash(resolved_args)
+            nonce = generate_nonce()
+            
+        expires_at = self._clock.now() + timedelta(hours=1)    
+
+        def _auth(*, granted_by: str, explicit: bool) -> Authorization:
+            return Authorization(
+                id=self._ids.new_id(),
+                task_id=task.id,
+                granted=True,
+                granted_by=granted_by,
+                explicit=explicit,
+                plan_hash=plan_hash,
+                step_hash=step_hash,
+                arguments_hash=arguments_hash,
+                expires_at=expires_at,
+                used_at=None,
+                nonce=nonce,
+            )
 
         if not decision.requires_authorization:
-            return Authorization(
-                id=self._ids.new_id(),
-                task_id=task.id,
-                granted=True,
-                granted_by="system",
-                explicit=False,
-                plan_hash=plan_hash,
-                step_hash=step_hash,
-                arguments_hash=arguments_hash,
-                expires_at=self._clock.now() + timedelta(hours=1),
-                nonce=nonce,
-            )
+            return _auth(granted_by="system", explicit=False)
 
         if explicit_user_ack:
-            return Authorization(
-                id=self._ids.new_id(),
-                task_id=task.id,
-                granted=True,
-                granted_by=acting_user,
-                explicit=True,
-                plan_hash=plan_hash,
-                step_hash=step_hash,
-                arguments_hash=arguments_hash,
-                expires_at=self._clock.now() + timedelta(hours=1),
-                nonce=nonce,
-            )
+            return _auth(granted_by=acting_user, explicit=True)
 
         if not decision.requires_explicit_acknowledgement:
-            # MEDIUM tier: "optional acknowledgement" — proceed with an
-            # implicit, non-explicit authorization, but the warning is
-            # still on record via the Decision + audit trail above.
-            return Authorization(
-                id=self._ids.new_id(),
-                task_id=task.id,
-                granted=True,
-                granted_by="system",
-                explicit=False,
-                plan_hash=plan_hash,
-                step_hash=step_hash,
-                arguments_hash=arguments_hash,
-                expires_at=self._clock.now() + timedelta(hours=1),
-                nonce=nonce,
-            )
+            return _auth(granted_by="system", explicit=False)
 
-        # HIGH / CRITICAL / UNKNOWN tier with no explicit ack yet: block.
         with self._uow:
             self._audit.record(
                 actor="decision_service",
@@ -312,27 +304,3 @@ class DecisionService:
                 metadata={"risk": decision.risk.value},
             )
         raise AuthorizationRequiredError(task.id, decision, risk_assessment)
-
-    def _grant(
-        self, *, task: Task, granted_by: str, explicit: bool, event_type: str
-    ) -> Authorization:
-        authorization = Authorization(
-            id=self._ids.new_id(),
-            task_id=task.id,
-            granted=True,
-            granted_by=granted_by,
-            explicit=explicit,
-        )
-        with self._uow:
-            self._authorizations.save(authorization)
-            self._audit.record(
-                actor=granted_by,
-                component="decision.authorization",
-                event_type=event_type,
-                action="grant",
-                result="granted",
-                request_id=task.request_id,
-                task_id=task.id,
-                metadata={"explicit": explicit},
-            )
-        return authorization
