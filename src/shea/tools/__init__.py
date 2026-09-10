@@ -1,3 +1,5 @@
+from shea.tools.provider import ToolProvider, load_tools
+
 from .boundary import UnsafeExecutionBoundary
 from .executor import (
     CapabilityNotAuthorizedError,
@@ -23,7 +25,6 @@ from .schema import (
     integer_arg,
     string_arg,
 )
-from shea.tools.provider import ToolProvider, load_tools
 
 __all__ = [
     "UnsafeExecutionBoundary",

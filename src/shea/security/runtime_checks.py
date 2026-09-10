@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from pathlib import Path
+from typing import NamedTuple, cast
 from urllib.parse import urlparse
 
 from shea.security.exceptions import SecurityViolationError
@@ -10,15 +11,34 @@ from shea.security.filesystem_policy import FilesystemPolicy, is_path_allowed
 from shea.security.network_policy import NetworkPolicy, is_url_allowed
 
 
+class ResolvedUrl(NamedTuple):
+    """A URL that has been DNS-resolved and policy-checked.
+
+    Holds the original URL string, the resolved host and port to which
+    the connection must be pinned (to close the DNS-rebinding TOCTOU gap),
+    and the canonical hostname to use for the Host header and TLS SNI.
+    """
+
+    url: str
+    host: str
+    port: int
+    resolved_ip: str
+
+
 def resolve_and_check_url(
     url: str, policy: NetworkPolicy, *, tool: str = "network"
-) -> str:
+) -> ResolvedUrl:
     """DNS-resolve host and re-check every address against network policy.
 
     Closes the pure-policy gap: ``is_url_allowed`` only inspects the host
     string. This resolves DNS at access time and blocks private /
     loopback / link-local / reserved / multicast results when
     ``policy.block_private_networks`` is True.
+
+    Returns a ResolvedUrl that pins the connection to the resolved IP
+    (preventing DNS-rebinding TOCTOU): the caller must connect to
+    resolved_ip:port while sending the original host as the Host header
+    and TLS SNI.
     """
     parsed = urlparse(url)
     host = parsed.hostname
@@ -28,8 +48,10 @@ def resolve_and_check_url(
     if not is_url_allowed(url, policy):
         raise SecurityViolationError(tool, "network", f"URL blocked by policy: {url!r}")
 
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
     try:
-        infos = socket.getaddrinfo(host, parsed.port or 80, type=socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise SecurityViolationError(
             tool, "network", f"DNS resolution failed: {exc}"
@@ -60,7 +82,12 @@ def resolve_and_check_url(
                     "network",
                     f"Resolved address {ip_str} for host {host!r} is not publicly routable",
                 )
-    return url
+
+    # Return the first resolved address to pin the connection.
+    # Using the first address matches typical client behavior and
+    # ensures we connect to an IP we actually validated.
+    resolved_ip: str = cast(str, infos[0][4][0])
+    return ResolvedUrl(url=url, host=host, port=port, resolved_ip=resolved_ip)
 
 
 def realpath_under_roots(

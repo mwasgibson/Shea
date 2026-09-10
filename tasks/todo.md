@@ -249,32 +249,142 @@
       before the tool runs (hard fail on missing/mismatched content; no
       soft skip), and sets `used_at` only after durable SUCCESS in the
       same unit of work — FAILURE/UNKNOWN do not consume the grant.
+      **Found and fixed while syncing this session**: the replay-protection
+      half of this was pure decoration on first landing.
+      `AuthorizationAlreadyUsedError` was defined specifically for this,
+      but never imported or raised anywhere — `_verify_authorization_
+      binding()`'s own docstring listed "nonce has not been used (replay
+      protection)" as check 6, but the code just unconditionally
+      overwrote `used_at` on every call with no check against its prior
+      value, and never inspected `auth.nonce` at all. Confirmed fixed:
+      `auth.used_at is not None` now raises `AuthorizationAlreadyUsedError`
+      before anything else runs. Plan-hash, step-hash, argument-hash, and
+      expiry checks were correct from the start — only replay protection
+      was affected.
 - [x] **Tool argument schemas** — `ToolDeclaration.argument_schema` +
       `ToolSchema` validation in `ToolExecutor` (after capability gate,
       before the boundary). Elevated capabilities require a non-`None`
       schema at register time (`SchemaRequiredError`); `None` means open
       tool, `{}` means explicit empty schema.
+      **Found and fixed while syncing this session**: `_validate_arguments()`
+      called `schema.get_validated_arguments(request)` purely for its
+      side effect of raising on failure and discarded the defaulted
+      arguments it returned — a schema's `default=` for a missing
+      optional argument was validated as present but never actually
+      reached the handler. Fixed: the method now returns the request
+      with defaults applied (via `dataclasses.replace`), and `execute()`
+      uses that returned request rather than the original.
+- [x] **Audit tamper-evidence (hash-chained events)** — implemented
+      this session, not left for later as originally planned.
+      `shea/audit/chain.py` (`hash_audit_event`, pure — SHA-256 of an
+      event's own content plus `prev_hash`) and `shea/persistence/sqlite/
+      audit_chain.py` (`verify_audit_chain`, walks the whole table by
+      `sequence_number` and reports `content_altered` / `link_broken` /
+      `sequence_gap` breaks). Migration adds `sequence_number`,
+      `prev_hash`, `event_hash` columns to `audit_events`.
+      **Found and fixed two bugs that made this universally non-functional
+      on first landing** — confirmed by direct reproduction, not just
+      code review:
+      - The genesis event's hash was computed using `GENESIS_PREV_HASH`
+        (64 zeros) as input, but `SqliteAuditSink.record()` then stored
+        `prev_hash = None` in the DB instead — what was stored never
+        matched what was hashed, so `verify_audit_chain()` reported
+        `content_altered` + `link_broken` on the very first event ever
+        recorded, in every database, unconditionally, with zero tampering
+        involved.
+      - `record()`'s "previous event" lookup was scoped to `(request_id,
+        task_id)`, while `verify_audit_chain()` checks one *global* chain
+        ordered by `sequence_number` — so the moment two tasks' events
+        interleaved (the normal case for any system running more than one
+        task), the chain falsely reported itself as broken.
+        `tests/unit/test_audit_tamper_evidence.py` had a test
+        (`test_different_scopes_have_separate_chains`) that explicitly
+        asserted the buggy per-scope behavior as *correct*, and no test
+        anywhere called `verify_audit_chain()` end-to-end to notice the
+        two halves disagreed.
+      Fixed: `record()` now always chains against the actual global tip
+      (by `sequence_number`) and never trusts chain fields the caller may
+      have already set on the `AuditEvent` it was given — the sink is now
+      the only place `sequence_number`/`prev_hash`/`event_hash` are
+      allowed to come from. Rewrote the whole test file: genesis case,
+      multi-event continuity, interleaved-task case (proving the actual
+      fix), tamper-via-raw-SQL detection (both the naive case and a
+      "sophisticated tamperer who also patches their own row's hash"
+      case, which correctly shifts the detected break from
+      `content_altered` to `link_broken` on the *next* row), and
+      deletion detection — all calling `verify_audit_chain()` directly
+      rather than re-testing components in isolation.
+      Known, stated-not-hidden limitation: a hash chain alone cannot
+      detect truncation of the tail — deleting only the most recent N
+      events leaves a chain that still verifies cleanly, since nothing
+      recorded after the truncation point exists to notice the gap.
+      Pinned as its own test
+      (`test_deleting_only_the_most_recent_event_is_not_detectable`)
+      rather than left as an unverified docstring claim. Defending
+      against tail truncation needs an external anchor (e.g.
+      periodically publishing the current tip hash somewhere else) —
+      out of scope here.
 - [x] **Multi-step state-machine foundation** — `step_verified` event
       (`VERIFYING` → `READY`) so intermediate steps re-enter Decision via
       `authorize_and_run`. `VerificationService.verify(more_steps=...)`
       selects final vs intermediate. `PlanRunner` walks steps with
       per-step binding. Full multi-step productization (durable step
       status, 2+ step e2e) is Phase 10.
+- [x] Full suite verified end-to-end after all of the above, from a fresh
+      sync against `origin/main`: 340/340 pytest, mypy --strict clean
+      (104 source files), ruff clean. (2 ruff import-order/style issues
+      and 1 mypy `unused type: ignore` turned up from the Phase 9 tools
+      commit while verifying — auto-fixed / fixed, not left for later.)
 - [x] Phase 8 documentation closed (README + this todo updated to
-      complete). Audit hash-chaining and adversarial test suites remain
-      in "Not yet built" — not required to close Phase 8.
+      complete). Audit hash-chaining is now actually implemented (see
+      above) — no longer deferred to "Not yet built."
 
-## Phase 9: First Real Tools
+## Phase 9: First Real Tools (complete)
 
-- [ ] `security/runtime_checks.py` — `realpath_under_roots`, `resolve_and_check_url`
-- [ ] Builtin `filesystem.read` (schema + handler + runtime path check)
-- [ ] Builtin `filesystem.write` (schema + handler + runtime path check)
-- [ ] Real `Verifier` for `filesystem.write` (not default trust-success)
-- [ ] `register_builtin_tools(registry, *, filesystem_policy, ...)`
-- [ ] Unit tests: path allow/deny; symlink escape blocked after resolve
-- [ ] E2E: plan → decide (bound) → execute write → verify → COMPLETED under a temp allowed root
-- [ ] Optional: `http.fetch` + DNS re-check tests
-- [ ] README note for first real tools; pytest / mypy / ruff green
+- [x] `security/runtime_checks.py` — `realpath_under_roots` (resolves
+      symlinks, requires the real path stay under an allowed root —
+      closes the TOCTOU gap `is_path_allowed`'s pure string-normalization
+      can't), `resolve_and_check_url` (DNS-resolves the host and re-checks
+      every returned address against network policy — closes the gap
+      where `is_url_allowed` only ever inspected the hostname string)
+- [x] Builtin `filesystem.read` (schema + handler + runtime path check)
+- [x] Builtin `filesystem.write` (schema + handler + runtime path check;
+      also re-checks the resolved *parent* directory before `mkdir`, so a
+      symlinked parent can't be used to escape allowed roots via
+      directory creation)
+- [x] Real `Verifier` for `filesystem.write` (`filesystem_write_verifier`
+      re-reads the file after a reported SUCCESS and compares actual
+      on-disk content against what the write claimed — not default
+      trust-success)
+- [x] `register_builtin_tools(registry, *, filesystem_policy, ...)` via a
+      small `ToolProvider` protocol (`load_tools`) — providers only
+      attach declarations/handlers/verifiers, never execute or authorize
+      anything themselves; `ToolExecutor`/`DecisionService` remain the
+      only authority paths. Confirmed opt-in only: not wired into
+      `tests/conftest.py`'s default `tool_registry` fixture, and
+      `include_http_fetch` defaults to `False`
+- [x] Unit tests: path allow/deny; symlink escape blocked after resolve
+- [ ] E2E: plan → decide (bound) → execute write → verify → COMPLETED
+      under a temp allowed root — not yet written; unit-level coverage
+      exists but nothing exercises the full pipeline for these tools yet
+- [x] `http.fetch` + DNS re-check tests
+- [ ] README note for first real tools — not yet written; only a stale
+      forward-looking "Next: Phase 9" pointer exists. Writing it now as
+      part of this documentation pass.
+- [ ] **Flagged, not fixed**: `http.fetch` has a DNS-rebinding TOCTOU gap.
+      `resolve_and_check_url()` resolves DNS and checks the resolved IPs
+      against policy, then returns the *original URL string* — the
+      subsequent `urlopen(url)` call re-resolves DNS itself at connect
+      time, with no guarantee it gets the same address that was just
+      checked. An attacker controlling DNS for the target hostname (or
+      exploiting a short TTL) has a window between the check and the
+      actual connection to redirect it to a private/internal address —
+      exactly the "DNS rebinding" attack research doc Section 18/24 name
+      by name. Properly closing this needs connection-pinning (resolve
+      once, connect to the checked IP directly, still present the
+      original hostname for the `Host` header / TLS SNI) — a real change
+      to how the fetch is performed, not a one-line fix, and out of scope
+      for a documentation pass.
 
 ## Phase 10: Multi-Step Execution
 
@@ -302,6 +412,10 @@
       equivalent) — `SandboxedExecutionBoundary` enforces timeout and
       redaction only; a thread timeout does not terminate an underlying
       process, socket, or file handle a tool already opened
+- [ ] `http.fetch` connection-pinning against DNS rebinding — see the
+      flagged item under Phase 9 above; `resolve_and_check_url()` checks
+      resolved IPs but the actual `urlopen()` call re-resolves DNS itself
+      at connect time, with no guarantee it's the same address
 - [x] ~~Tool schemas~~ — done in Phase 8 (`argument_schema`, elevated
       capability gate, executor validation)
 - [x] ~~Authorization binding~~ — done in Phase 8 (hashes, expiry, nonce,
@@ -311,9 +425,13 @@
       metadata, but there is no `SecretStore.get/set/delete/rotate`
       abstraction; secrets aren't actually managed, just redacted after
       the fact
-- [ ] Audit tamper-evidence (hash-chained events) — `audit_events` is
-      insert-only by API (`AuditSink` exposes no update/delete), but
-      nothing detects direct database tampering
+- [x] ~~Audit tamper-evidence (hash-chained events)~~ — done this session
+      (see the completed Phase 8 item above for the two bugs found and
+      fixed along the way). `audit_events` is still insert-only by API
+      (`AuditSink` exposes no update/delete), and now also hash-chained
+      end to end via `verify_audit_chain()`. Known limitation, stated
+      there and pinned as its own test: tail truncation (deleting only
+      the most recent events) is not detectable by a hash chain alone.
 - [x] ~~Cross-repository transactional atomicity~~ — done as of Phase 8's
       full sweep (see the completed Phase 8 item above): every repository
       write that pairs with an audit event now shares a `UnitOfWork` and

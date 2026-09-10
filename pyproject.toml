@@ -28,6 +28,12 @@ addopts = "-q"
 python_version = "3.11"
 strict = true
 files = ["src"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_calls = false
 
 [tool.ruff]
 line-length = 100

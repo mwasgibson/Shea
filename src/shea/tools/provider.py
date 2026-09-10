@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Protocol, Sequence
+from collections.abc import Sequence
+from typing import Protocol
 
 from shea.tools.registry import ToolRegistry
 from shea.verification.verifier import VerifierRegistry

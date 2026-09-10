@@ -1,4 +1,4 @@
-# SHEA — Phase 1–8 complete
+# SHEA — Phase 1–9 complete
 
 Phase 1 is the foundation layer (state machine, persistence, contracts,
 config). Phase 2 adds the Decision/Policy/Risk engine — the only
@@ -17,10 +17,23 @@ failover underneath. Phase 8 (complete) hardens what Phases 1–7 built and clos
 gaps that were only conventions before: mandatory `SecurityService` on
 execute, no silent unsafe execution, wired retry/idempotency, shared
 `UnitOfWork` for critical write paths, content-bound authorization
-(plan/step/argument hashes, expiry, one-shot nonce), tool argument
-schemas with elevated-capability register gates, and a multi-step
-state-machine foundation (`step_verified` → READY). Next: Phase 9 (first
-real tools under policy), then Phase 10 (multi-step product e2e).
+(plan/step/argument hashes, expiry, one-shot nonce), a hash-chained
+tamper-evident audit trail, tool argument schemas with elevated-capability
+register gates, and a multi-step state-machine foundation (`step_verified`
+→ READY). Phase 9 (complete) adds the first real tools that touch the
+outside world under that hardening: `filesystem.read`/`write` and an
+opt-in `http.fetch`, gated by runtime path/DNS re-checks that close what
+pure policy string-matching can't. Next: Phase 10 (multi-step product
+e2e).
+
+Three of Phase 8/9's features shipped with real bugs that a full
+verification pass — not just reading the code — caught and fixed: the
+audit hash chain reported every database as tampered from its very first
+event, authorization replay protection was pure decoration (the
+exception it needed existed but was never raised), and tool schema
+`default=` values were validated but silently never delivered to
+handlers. Each is called out where it happened below rather than folded
+quietly into "done."
 
 ## What's here
 
@@ -29,20 +42,21 @@ real tools under policy), then Phase 10 (multi-step product e2e).
 | `shea.contracts` | Typed, framework-free data shapes: `Request`, `Intent`, `Task`, `Plan`, `PlanStep`, `Decision`, `RiskAssessment`, `Authorization`, `AuditEvent`, `ToolRequest`/`ToolResponse`, `ModelResponse`, `ToolExecutionRecord`, `VerificationRecord`, `RecoveryAttempt`. |
 | `shea.ports` | Abstract interfaces (`TaskRepository`, `PlanRepository`, `IntentRepository`, `DecisionRepository`, `RiskAssessmentRepository`, `AuthorizationRepository`, `ToolExecutionRepository`, `VerificationRepository`, `RecoveryAttemptRepository`, `AuditSink`, `Clock`, `IdGenerator`, `ModelProvider`, `UnitOfWork`) — the hexagonal boundary. Nothing concrete lives here. |
 | `shea.state_machine` | Authoritative transition table (Appendix A, plus `execution_unknown` and `step_verified`) and `next_state()` — the only function allowed to change task state. Illegal transitions raise `IllegalTransitionError`. |
-| `shea.persistence.sqlite` | Concrete adapters implementing the ports above: connection handling, numbered SQL migrations (0001–0006), repositories. SQLite is the source of truth for task/plan state — not an in-memory cache with SQLite as backup. |
+| `shea.persistence.sqlite` | Concrete adapters implementing the ports above: connection handling, numbered SQL migrations (0001–0005 — hash-chain, authorization-binding, and recovery-delay columns were folded directly into the original schema-defining migrations rather than added as new ones, since nothing has shipped a real deployment yet), repositories, and `audit_chain.py` (`verify_audit_chain` — walks `audit_events` and reports `content_altered`/`link_broken`/`sequence_gap` breaks). SQLite is the source of truth for task/plan state — not an in-memory cache with SQLite as backup. |
 | `shea.config` | The six-layer configuration resolver (System → Machine → User → Profile → Project → Session), with `security_invariant_keys` that can only ever be set at the System layer regardless of what any other layer says. |
 | `shea.core` | The `Orchestrator` — thin coordination of task lifecycle. Creates tasks, advances them via the state machine, attaches plans, persists, and audits every attempt (success *and* rejection). Each state write and its audit event commit or roll back together via a shared `UnitOfWork`, not as two independent commits. |
 | `shea.model` | `ModelProvider` port (`generate()`/`health()`/`capabilities()`) and `ScriptedModelProvider` — a deterministic queued-response double. No real LLM API integration ships here; that's the Provider Routing phase's job. |
 | `shea.understanding` | `DeterministicIntentMatcher` (pure) and `IntentParser` (pure) — research doc Section 6.2's hybrid: known commands matched deterministically, everything else falls back to the model, with `AmbiguousIntentError` for low-confidence output and `MalformedModelOutputError` for unparseable output. |
 | `shea.planning` | `PlanTemplateRegistry` (pure), `validate_plan()` (pure — the "model suggested this" vs "Shea will act on this" boundary), `capabilities_for_plan()` (pure — bridges Planning to Decision), and `PlanningService` — the integration layer, sole caller of `start_planning`/`plan_ready`/`plan_failed`/`block`/`attach_plan`. |
 | `shea.decision` | `PolicyEngine`, `RiskEngine`, confirmation-tier rules, and `DecisionService` — sole caller of `authorize_and_run`; issues content-bound `Authorization` records (plan/step/argument hashes, expiry, nonce) when a plan is present. |
-| `shea.tools` | `ToolDeclaration` + `ToolRegistry` (capability profiles; optional `argument_schema`; elevated capabilities require a schema at register) and `ToolExecutor` (capability gate *before* handler lookup, schema validation when declared, SUCCESS/FAILURE/UNKNOWN outcomes). |
+| `shea.tools` | `ToolDeclaration` + `ToolRegistry` (capability profiles; optional `argument_schema`; elevated capabilities require a schema at register) and `ToolExecutor` (capability gate *before* handler lookup, schema validation when declared — defaults it computes are actually applied to the request via `dataclasses.replace`, not just checked and discarded — SUCCESS/FAILURE/UNKNOWN outcomes). `schema.py` is the pure validation engine; `provider.py`'s `ToolProvider` protocol + `load_tools()` let a registration bundle (see `shea.tools.builtin`) attach declarations/handlers/verifiers without ever executing or authorizing anything itself. |
+| `shea.tools.builtin` | The first tools that touch the outside world: `filesystem.read`/`filesystem.write` and an opt-in `http.fetch`, registered via `register_builtin_tools()`. Not wired into any default fixture — a caller has to ask for these explicitly, and `http.fetch` needs `include_http_fetch=True` on top of that. |
 | `shea.execution` | `ExecutionService` — looks up authorized capabilities from the persisted `Decision`, verifies authorization content-binding, requires `SecurityService`, enforces idempotency (SUCCESS/UNKNOWN suppress), runs one tool call through `ToolExecutor`, persists `ToolExecutionRecord`, advances by outcome. `PlanRunner` walks multi-step plans with per-step binding (product multi-step is Phase 10). |
 | `shea.verification` | `Verifier`/`VerifierRegistry` and `VerificationService` — sole caller of `verified` / `verification_failed` / `step_verified` (intermediate steps return to READY for the next authorization). Execution success does not force verification to agree. |
 | `shea.recovery` | `Compensator` abstraction + `RecoveryService` — bounded Saga-style retry (`FAILED -> RECOVERING -> READY \| FAILED`), counted from persisted attempts, and `resolve_blocked()` for tasks Phase 3's `UNKNOWN` execution outcome routes to `BLOCKED`. `RetryController` is the single source of truth for the attempt budget and supplies the backoff delay persisted on each `RecoveryAttempt`. |
-| `shea.security` | `NetworkPolicy`/`FilesystemPolicy` (SSRF and path-scope protection, pure), `SecretRedactor` (pattern-based, recursive), `PromptInjectionDetector` (heuristic), `SecurityGate` (pure pre-execution request scanner), `SecurityService` — the only caller of `Orchestrator.advance(task_id, "security_halt")`; its violation path (violation audit -> task halt -> transition audit) commits or rolls back as one transaction. Also `SandboxedExecutionBoundary` — the real "Sandbox" pipeline stage (timeout + redaction). |
+| `shea.security` | `NetworkPolicy`/`FilesystemPolicy` (SSRF and path-scope protection, pure) plus `runtime_checks.py`'s `realpath_under_roots`/`resolve_and_check_url` (the filesystem/DNS re-checks a pure policy can't do — symlink resolution, live DNS resolution), `SecretRedactor` (pattern-based, recursive), `PromptInjectionDetector` (heuristic), `SecurityGate` (pure pre-execution request scanner), `binding.py` (pure content-hashing for `Authorization` — plan/step/argument hashes, nonce generation), `SecurityService` — the only caller of `Orchestrator.advance(task_id, "security_halt")`; its violation path (violation audit -> task halt -> transition audit) commits or rolls back as one transaction. Also `SandboxedExecutionBoundary` — the real "Sandbox" pipeline stage (timeout + redaction). |
 | `shea.provider` | `ProviderProfile`/`ProviderTrustLevel` (LOCAL/TRUSTED_REMOTE/UNTRUSTED), `HealthTracker` (sliding-window health), `FailureCategory`/`classify_exception()`, `ProviderRouter` (pure eligibility + ranking), `ProviderRoutingService` — structurally satisfies `ModelProvider` itself, so it's a drop-in for `IntentParser`/`PlanningService`. |
-| `shea.audit` | `AuditRecorder` — centralizes event ID / timestamp generation so no call site can emit a malformed audit event; optionally redacts metadata via an injected `Redactor`. |
+| `shea.audit` | `AuditRecorder` — centralizes event ID / timestamp generation so no call site can emit a malformed audit event; optionally redacts metadata via an injected `Redactor`. `chain.py`'s `hash_audit_event` is the pure SHA-256 hashing function backing the tamper-evident chain (see `shea.persistence.sqlite`'s `verify_audit_chain` for the verification side) — storage-neutral on purpose, so any `AuditSink` implementation could use it. |
 | `shea.adapters` | Production implementations of `Clock` and `IdGenerator` (real time, real UUIDs). Tests use fakes instead — see `tests/conftest.py`. |
 
 ## Why this order
@@ -177,19 +191,101 @@ plan steps must pass `authorize_and_run` again; final steps still use
 `verified` → COMPLETED. `PlanRunner` orchestrates the multi-step loop;
 durable step status and full multi-step e2e are Phase 10.
 
-**Next:** Phase 9 — first real tools (`filesystem.read` / `write` under
-policy with runtime path checks and real verifiers). Phase 10 — multi-step
-productization on top of those tools.
+**Tamper-evidence:** `audit_events` gets three more columns —
+`sequence_number`, `prev_hash`, `event_hash` — forming a SHA-256 hash
+chain across the *entire* table, not per task. `shea/audit/chain.py`
+(`hash_audit_event`) is the pure hashing function; `shea/persistence/
+sqlite/audit_chain.py` (`verify_audit_chain`) walks the table and reports
+three kinds of break: `content_altered` (a row's stored content no longer
+matches its stored hash), `link_broken` (a row's `prev_hash` doesn't
+match its predecessor's actual `event_hash`), and `sequence_gap` (a
+missing `sequence_number`). Stated plainly rather than oversold: this
+detects alteration or deletion of anything *before* the current chain
+tip, because doing so breaks a link something later depends on — it
+cannot by itself detect truncating the tail (deleting only the most
+recent events), since nothing recorded after the truncation point exists
+to notice the gap. Defending against that needs an external anchor
+(periodically publishing the tip hash somewhere else), which is out of
+scope here.
+
+**What broke on first landing, found by actually exercising the code
+rather than reading it:** the audit chain reported every database as
+tampered from its first event, always, with zero actual tampering — the
+genesis event's hash was computed using a fixed `GENESIS_PREV_HASH`
+marker but then stored a plain `None` for `prev_hash` instead, so what
+was stored never matched what was hashed. A second bug compounded it:
+`SqliteAuditSink.record()` looked up its "previous event" scoped to
+`(request_id, task_id)`, while `verify_audit_chain()` checks one global
+chain by `sequence_number` — so two tasks' events interleaving (normal
+for any system running more than one task) broke it too. The existing
+test suite had a test asserting the buggy per-scope behavior as
+*correct*, and nothing called `verify_audit_chain()` end-to-end to notice
+the two halves disagreed. Both are fixed: `record()` now always chains
+against the true global tip and never trusts chain fields a caller might
+already have set on the event it was given. Separately, authorization
+replay protection turned out to be pure decoration —
+`AuthorizationAlreadyUsedError` existed specifically for this but was
+never imported or raised anywhere, despite `_verify_authorization_
+binding()`'s own docstring listing it as a check it performed. And tool
+schema `default=` values were computed by validation but the computed
+result was discarded, so declared defaults never actually reached a
+handler. All three are fixed and have tests proving the fix, not just
+re-testing the pieces in isolation (`tests/unit/test_audit_tamper_
+evidence.py` was rewritten entirely around this).
+
+Phase 9 adds the first tools that touch the outside world under all of
+that hardening: `filesystem.read`/`filesystem.write`
+(`shea/tools/builtin/filesystem.py`) and an opt-in `http.fetch`
+(`shea/tools/builtin/http_fetch.py`), registered via a small
+`ToolProvider` protocol (`register_builtin_tools`) that only attaches
+declarations/handlers/verifiers — `ToolExecutor`/`DecisionService` remain
+the only authority paths, matching the same separation Phase 7 kept for
+providers. `shea/security/runtime_checks.py` closes gaps pure policy
+string-matching can't: `realpath_under_roots` resolves symlinks and
+requires the *real* path stay under an allowed root (a symlink inside an
+allowed root pointing outside is rejected, and `filesystem.write` also
+re-checks the resolved parent directory before `mkdir` so a symlinked
+parent can't be used to escape via directory creation), and
+`resolve_and_check_url` DNS-resolves the host and re-checks every
+returned address against network policy. `filesystem_write_verifier` is
+a real verifier — it re-reads the file after a reported SUCCESS and
+compares actual on-disk content against what the write claimed, not
+default trust-success. Confirmed opt-in only: not wired into `tests/
+conftest.py`'s default `tool_registry` fixture, and `include_http_fetch`
+defaults to `False`.
+
+**Flagged, not fixed:** `http.fetch` has a DNS-rebinding TOCTOU gap.
+`resolve_and_check_url()` checks the resolved IPs at call time and
+returns the original URL string, but the subsequent `urlopen()` call
+re-resolves DNS itself at actual connect time — with no guarantee it's
+the same address that was just checked. An attacker controlling DNS for
+the target hostname (or exploiting a short TTL) has a window to redirect
+the real connection to a private address after the check passes. Properly
+closing this needs connection-pinning (resolve once, connect to the
+checked IP directly, still present the original hostname for `Host` /
+TLS SNI) — a real change to how the fetch is performed, not a one-line
+fix, and left open rather than patched over for this pass.
+
+**Next:** Phase 10 — multi-step productization on top of these tools
+(durable `PlanStep` state, distinct authorization per step, a real ≥2-step
+end-to-end test).
 
 ## What's deliberately NOT here yet
 
 - Any real model/LLM API integration (`ScriptedModelProvider` is a
   deterministic double, not a production adapter)
 - Real OS-level sandboxing: `SandboxedExecutionBoundary` enforces timeout
-  and redaction; `NetworkPolicy`/`FilesystemPolicy` check literal request
-  content, not runtime behavior — DNS rebinding and symlink-based path
-  escapes are documented, explicit gaps requiring real network
-  resolution / OS-level realpath checks at actual access time
+  and redaction only — a thread timeout does not terminate an underlying
+  process, socket, or file handle a tool already opened. Narrower than
+  it used to be: Phase 9's `runtime_checks.py` closed the blanket "DNS
+  rebinding and symlink escapes aren't checked at all" gap this used to
+  describe — `realpath_under_roots` does real symlink resolution against
+  the actual filesystem, and `resolve_and_check_url` does real DNS
+  resolution and re-checks every returned address. What's left is
+  narrower: `http.fetch`'s resolved-and-checked address isn't pinned to
+  the address the actual connection ends up using, so a TOCTOU window
+  remains between the check and the real `urlopen()` call (see the
+  Phase 9 section above)
 - Multi-step plan *product* finish (SM + `PlanRunner` + `step_verified`
   exist; durable step state and 2+ step e2e are Phase 10)
 - Real per-tool Verifiers and Compensators — Phase 4 provides the
@@ -238,20 +334,21 @@ src/shea/
 ├── contracts/          # pure data shapes
 ├── ports/              # hexagonal interfaces (incl. UnitOfWork)
 ├── state_machine/      # TRANSITIONS + next_state()
-├── persistence/sqlite/ # migrations + repositories
+├── persistence/sqlite/ # migrations + repositories + audit_chain verification
 ├── config/             # six-layer resolver
 ├── core/               # Orchestrator
 ├── model/              # ModelProvider + ScriptedModelProvider
 ├── understanding/      # DeterministicIntentMatcher + IntentParser
 ├── planning/           # templates, validate_plan, PlanningService
 ├── decision/           # Policy, Risk, DecisionService
-├── tools/              # Registry, Executor, schemas, boundary
+├── tools/              # Registry, Executor, schemas, boundary, provider protocol
+│   └── builtin/        # filesystem.read/write, http.fetch
 ├── execution/          # ExecutionService, PlanRunner
 ├── verification/       # Verifier registry + VerificationService
 ├── recovery/           # Retry, Idempotency, RecoveryService
-├── security/           # Gate, policies, sandbox, SecurityService
+├── security/           # Gate, policies, runtime_checks, binding, SecurityService
 ├── provider/           # Routing + failover
-├── audit/              # AuditRecorder
+├── audit/              # AuditRecorder + chain hashing
 └── adapters/           # concrete Clock / IdGenerator
 
 tests/
