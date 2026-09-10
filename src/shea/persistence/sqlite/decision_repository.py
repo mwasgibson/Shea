@@ -49,7 +49,13 @@ class SqliteDecisionRepository:
 
     def get_by_task(self, task_id: str) -> Decision | None:
         row = self._conn.execute(
-            "SELECT * FROM decisions WHERE task_id = ?", (task_id,)
+            """
+            SELECT * FROM decisions
+            WHERE task_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (task_id,),
         ).fetchone()
         if row is None:
             return None

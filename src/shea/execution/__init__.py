@@ -1,3 +1,4 @@
+from .plan_runner import PlanRunner, PlanRunResult
 from .service import (
     DuplicateExecutionSuppressedError,
     ExecutionOutcomeRecord,
@@ -7,6 +8,8 @@ from .service import (
 )
 
 __all__ = [
+    "PlanRunResult",
+    "PlanRunner",
     "DuplicateExecutionSuppressedError",
     "ExecutionOutcomeRecord",
     "ExecutionService",
