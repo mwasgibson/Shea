@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from shea.app.adapters.process_local import LocalProcessAdapter
+from shea.app.adapters.stub import StubAdapter
+from shea.app.contracts import ExecutionContract
+from shea.app.enums import AppOutcome
+from shea.app.exceptions import ContractValidationError
+from shea.app.identities import (
+    IdentityAssurance,
+    IdentityKind,
+    IdentityRequirements,
+    RequestedTarget,
+)
+from shea.app.identity.resolver import IdentityResolver
+from shea.app.identity.revalidator import IdentityRevalidator
+from shea.app.ports import AttemptRepository, ReceiptRepository
+from shea.app.scope_enforce import evaluate_scope
+from shea.app.scopes import (
+    ExecutionScope,
+    IsolationPolicy,
+    ProcessScope,
+    ResourceLimits,
+)
+from shea.app.supervisor import ExecutionSupervisor
+from shea.ports.clock import Clock
+from shea.ports.id_generator import IdGenerator
+from shea.ports.unit_of_work import UnitOfWork
+
+
+def test_resolve_path_canonical(tmp_path: Path):
+    target = RequestedTarget(kind=IdentityKind.PATH, value=str(tmp_path / "a" / "b.txt"))
+    resolved = IdentityResolver().resolve(target, IdentityRequirements())
+    assert resolved.kind is IdentityKind.PATH
+    assert resolved.canonical_value.endswith("b.txt")
+
+
+def test_strict_path_requires_parent(tmp_path: Path):
+    missing_parent = tmp_path / "nope" / "file.txt"
+    resolved = IdentityResolver().resolve(
+        RequestedTarget(kind=IdentityKind.PATH, value=str(missing_parent)),
+        IdentityRequirements(assurance=IdentityAssurance.STRICT),
+    )
+    with pytest.raises(ContractValidationError, match="parent"):
+        IdentityRevalidator().verify(
+            resolved,
+            IdentityRequirements(assurance=IdentityAssurance.STRICT),
+        )
+
+
+def test_scope_fails_closed_on_required_cgroup():
+    scope = ExecutionScope(
+        scope_id="s1",
+        isolation=IsolationPolicy(require_cgroup=True),
+    )
+    with pytest.raises(ContractValidationError, match="cgroup"):
+        evaluate_scope(scope)
+
+
+def test_process_spawn_echo(
+    clock: Clock, id_generator: IdGenerator, unit_of_work: UnitOfWork,
+    app_receipt_repository: ReceiptRepository, app_attempt_repository: AttemptRepository
+):
+    scope = ExecutionScope(
+        scope_id="s-proc",
+        process=ProcessScope(
+            allowed_executables=frozenset({sys.executable, "python", "python3"}),
+            inherit_environ=True,
+        ),
+        resources=ResourceLimits(wall_time_ms=10_000, output_bytes=64_000),
+    )
+    supervisor = ExecutionSupervisor(
+        adapters=[LocalProcessAdapter(), StubAdapter()],
+        receipt_repository=app_receipt_repository,
+        attempt_repository=app_attempt_repository,
+        clock=clock,
+        id_generator=id_generator,
+        unit_of_work=unit_of_work,
+    )
+    contract = ExecutionContract(
+        contract_id="c-proc-1",
+        authorization_id="auth-1",
+        capability="process.execute",
+        operation="process.run",
+        target=sys.executable,
+        arguments={"argv": [sys.executable, "-c", "print('shea-app')"]},
+        requested_target=RequestedTarget(
+            kind=IdentityKind.PATH, value=sys.executable
+        ),
+        identity_requirements=IdentityRequirements(assurance=IdentityAssurance.BASIC),
+        scope=scope,
+    )
+    result = supervisor.execute(contract)
+    assert result.adapter_result.outcome is AppOutcome.SUCCESS
+    assert "shea-app" in result.adapter_result.evidence.get("stdout", "")

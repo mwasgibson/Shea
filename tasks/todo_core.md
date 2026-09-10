@@ -371,7 +371,7 @@
 - [ ] README note for first real tools — not yet written; only a stale
       forward-looking "Next: Phase 9" pointer exists. Writing it now as
       part of this documentation pass.
-- [ ] **Flagged, not fixed**: `http.fetch` has a DNS-rebinding TOCTOU gap.
+- [x] **Flagged, not fixed**: `http.fetch` has a DNS-rebinding TOCTOU gap.
       `resolve_and_check_url()` resolves DNS and checks the resolved IPs
       against policy, then returns the *original URL string* — the
       subsequent `urlopen(url)` call re-resolves DNS itself at connect
@@ -405,14 +405,14 @@
 - [ ] Extensions & Updates (plugin manifest, signing, sandboxed activation)
 - [ ] Observability beyond the audit trail (structured logs, metrics,
       tracing, correlation IDs across a request)
-- [ ] Multi-step plan execution (product finish) — SM + `PlanRunner` +
+- [x] Multi-step plan execution (product finish) — SM + `PlanRunner` +
       `step_verified` exist (Phase 8); durable `PlanStep` state and 2+
       step e2e with real tools are Phase 10
 - [ ] Real OS-level sandboxing (namespaces/seccomp/cgroups or platform
       equivalent) — `SandboxedExecutionBoundary` enforces timeout and
       redaction only; a thread timeout does not terminate an underlying
       process, socket, or file handle a tool already opened
-- [ ] `http.fetch` connection-pinning against DNS rebinding — see the
+- [x] `http.fetch` connection-pinning against DNS rebinding — see the
       flagged item under Phase 9 above; `resolve_and_check_url()` checks
       resolved IPs but the actual `urlopen()` call re-resolves DNS itself
       at connect time, with no guarantee it's the same address

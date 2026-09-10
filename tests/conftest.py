@@ -16,6 +16,8 @@ from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
 from shea.execution.service import ExecutionService
 from shea.model.scripted import ScriptedModelProvider
+from shea.persistence.sqlite.app_attempt_repository import SqliteAppAttemptRepository
+from shea.persistence.sqlite.app_receipt_repository import SqliteAppReceiptRepository
 from shea.persistence.sqlite.audit_sink import SqliteAuditSink
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.connection import open_connection
@@ -496,3 +498,17 @@ def security_service(
         audit=audit_recorder,
         unit_of_work=unit_of_work,
     )
+
+    
+@pytest.fixture
+def app_receipt_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteAppReceiptRepository:
+    return SqliteAppReceiptRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
+def app_attempt_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteAppAttemptRepository:
+    return SqliteAppAttemptRepository(conn, unit_of_work=unit_of_work)
