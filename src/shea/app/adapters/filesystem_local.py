@@ -149,11 +149,32 @@ class LocalFilesystemAdapter:
                 },
             )
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        try:
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error=str(exc),
+                evidence={
+                    **self._base_evidence(receipt, attempt),
+                    "path": str(source),
+                    "destination": str(destination),
+                },
+            )
         if not destination.is_file() or not source.is_file():
             return AdapterResult(
                 outcome=AppOutcome.FAILURE,
                 error="postcondition failed: source or destination missing after copy",
+                evidence={
+                    **self._base_evidence(receipt, attempt),
+                    "path": str(source),
+                    "destination": str(destination),
+                },
+            )
+        elif source.stat().st_size != destination.stat().st_size:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error="postcondition failed: size mismatch after copy",
                 evidence={
                     **self._base_evidence(receipt, attempt),
                     "path": str(source),
@@ -184,6 +205,16 @@ class LocalFilesystemAdapter:
                 error=f"not a file: {source}",
                 evidence={**self._base_evidence(receipt, attempt), "path": str(source)},
             )
+        if source.resolve() == destination.resolve():
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error="source and destination are the same path",
+                evidence={
+                    **self._base_evidence(receipt, attempt),
+                    "path": str(source),
+                    "destination": str(destination),
+                },
+            )
         if destination.exists():
             return AdapterResult(
                 outcome=AppOutcome.FAILURE,
@@ -195,7 +226,18 @@ class LocalFilesystemAdapter:
                 },
             )
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(destination))
+        try:
+            shutil.move(str(source), str(destination))
+        except OSError as exc:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error=str(exc),
+                evidence={
+                    **self._base_evidence(receipt, attempt),
+                    "path": str(source),
+                    "destination": str(destination),
+                },
+            )
         if source.exists() or not destination.is_file():
             return AdapterResult(
                 outcome=AppOutcome.FAILURE,

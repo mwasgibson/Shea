@@ -18,7 +18,10 @@ from shea.app.identities import (
 )
 from shea.app.identity.resolver import IdentityResolver
 from shea.app.identity.revalidator import IdentityRevalidator
-from shea.app.ports import AttemptRepository, ReceiptRepository
+from shea.app.memory import (
+    InMemoryAttemptRepository,
+    InMemoryReceiptRepository,
+)
 from shea.app.scope_enforce import evaluate_scope
 from shea.app.scopes import (
     EnforcementStatus,
@@ -101,7 +104,7 @@ def test_scope_allows_filesystem_with_non_empty_roots():
 
 def test_process_spawn_echo(
     clock: Clock, id_generator: IdGenerator, unit_of_work: UnitOfWork,
-    app_receipt_repository: ReceiptRepository, app_attempt_repository: AttemptRepository
+    app_receipt_repository: InMemoryReceiptRepository, app_attempt_repository: InMemoryAttemptRepository
 ):
     scope = ExecutionScope(
         scope_id="s-proc",

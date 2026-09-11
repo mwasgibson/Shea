@@ -13,7 +13,10 @@ from shea.app.identities import (
     IdentityRequirements,
     RequestedTarget,
 )
-from shea.app.ports import AttemptRepository, ReceiptRepository
+from shea.app.memory import (
+    InMemoryAttemptRepository,
+    InMemoryReceiptRepository,
+)
 from shea.app.scopes import ExecutionScope, FilesystemScope
 from shea.app.supervisor import ExecutionSupervisor
 from shea.ports.clock import Clock
@@ -32,8 +35,8 @@ def _supervisor(
     clock: Clock,
     id_generator: IdGenerator,
     unit_of_work: UnitOfWork,
-    receipt_repository: ReceiptRepository,
-    attempt_repository: AttemptRepository,
+    receipt_repository: InMemoryReceiptRepository,
+    attempt_repository: InMemoryAttemptRepository,
 ) -> ExecutionSupervisor:
     return ExecutionSupervisor(
         adapters=[LocalFilesystemAdapter()],
@@ -50,8 +53,8 @@ def test_write_read_round_trip(
     clock: Clock,
     id_generator: IdGenerator,
     unit_of_work: UnitOfWork,
-    app_receipt_repository: ReceiptRepository,
-    app_attempt_repository: AttemptRepository,
+    app_receipt_repository: InMemoryReceiptRepository,
+    app_attempt_repository: InMemoryAttemptRepository,
 ) -> None:
     root = tmp_path / "ws"
     root.mkdir()
@@ -97,8 +100,8 @@ def test_path_outside_roots_denied(
     clock: Clock,
     id_generator: IdGenerator,
     unit_of_work: UnitOfWork,
-    app_receipt_repository: ReceiptRepository,
-    app_attempt_repository: AttemptRepository,
+    app_receipt_repository: InMemoryReceiptRepository,
+    app_attempt_repository: InMemoryAttemptRepository,
 ) -> None:
     root = tmp_path / "ws"
     root.mkdir()
@@ -131,8 +134,8 @@ def test_symlink_escape_denied(
     clock: Clock,
     id_generator: IdGenerator,
     unit_of_work: UnitOfWork,
-    app_receipt_repository: ReceiptRepository,
-    app_attempt_repository: AttemptRepository,
+    app_receipt_repository: InMemoryReceiptRepository,
+    app_attempt_repository: InMemoryAttemptRepository,
 ) -> None:
     root = tmp_path / "ws"
     root.mkdir()
@@ -167,8 +170,8 @@ def test_read_only_scope_blocks_write(
     clock: Clock,
     id_generator: IdGenerator,
     unit_of_work: UnitOfWork,
-    app_receipt_repository: ReceiptRepository,
-    app_attempt_repository: AttemptRepository,
+    app_receipt_repository: InMemoryReceiptRepository,
+    app_attempt_repository: InMemoryAttemptRepository,
 ) -> None:
     root = tmp_path / "ws"
     root.mkdir()
@@ -202,8 +205,8 @@ def test_copy_and_move_round_trip(
     clock: Clock,
     id_generator: IdGenerator,
     unit_of_work: UnitOfWork,
-    app_receipt_repository: ReceiptRepository,
-    app_attempt_repository: AttemptRepository,
+    app_receipt_repository: InMemoryReceiptRepository,
+    app_attempt_repository: InMemoryAttemptRepository,
 ) -> None:
     root = tmp_path / "ws"
     root.mkdir()
@@ -244,8 +247,8 @@ def test_copy_denies_destination_outside_scope(
     clock: Clock,
     id_generator: IdGenerator,
     unit_of_work: UnitOfWork,
-    app_receipt_repository: ReceiptRepository,
-    app_attempt_repository: AttemptRepository,
+    app_receipt_repository: InMemoryReceiptRepository,
+    app_attempt_repository: InMemoryAttemptRepository,
 ) -> None:
     root = tmp_path / "ws"
     root.mkdir()

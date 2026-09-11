@@ -17,7 +17,11 @@ from shea.decision.service import DecisionService
 from shea.execution.service import ExecutionService
 from shea.model.scripted import ScriptedModelProvider
 from shea.persistence.sqlite.app_attempt_repository import SqliteAppAttemptRepository
+from shea.persistence.sqlite.app_evidence_repository import SqliteAppEvidenceRepository
+from shea.persistence.sqlite.app_idempotency_repository import SqliteAppIdempotencyRepository
 from shea.persistence.sqlite.app_receipt_repository import SqliteAppReceiptRepository
+from shea.persistence.sqlite.app_recovery_repository import SqliteAppRecoveryRepository
+from shea.persistence.sqlite.app_verification_repository import SqliteAppVerificationRepository
 from shea.persistence.sqlite.audit_sink import SqliteAuditSink
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.connection import open_connection
@@ -512,3 +516,31 @@ def app_attempt_repository(
     conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
 ) -> SqliteAppAttemptRepository:
     return SqliteAppAttemptRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
+def app_evidence_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteAppEvidenceRepository:
+    return SqliteAppEvidenceRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
+def app_verification_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteAppVerificationRepository:
+    return SqliteAppVerificationRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
+def app_idempotency_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteAppIdempotencyRepository:
+    return SqliteAppIdempotencyRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
+def app_recovery_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteAppRecoveryRepository:
+    return SqliteAppRecoveryRepository(conn, unit_of_work=unit_of_work)
