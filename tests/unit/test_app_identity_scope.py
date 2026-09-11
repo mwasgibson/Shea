@@ -21,6 +21,7 @@ from shea.app.identity.revalidator import IdentityRevalidator
 from shea.app.ports import AttemptRepository, ReceiptRepository
 from shea.app.scope_enforce import evaluate_scope
 from shea.app.scopes import (
+    EnforcementStatus,
     ExecutionScope,
     IsolationPolicy,
     ProcessScope,
@@ -59,6 +60,43 @@ def test_scope_fails_closed_on_required_cgroup():
     )
     with pytest.raises(ContractValidationError, match="cgroup"):
         evaluate_scope(scope)
+
+
+def test_scope_fails_closed_on_empty_filesystem_roots_with_filesystem_op():
+    from shea.app.scopes import FilesystemScope
+    scope = ExecutionScope(
+        scope_id="s-fs",
+        filesystem=FilesystemScope(allowed_roots=frozenset()),
+    )
+    contract = ExecutionContract(
+        contract_id="c-fs",
+        authorization_id="auth-1",
+        capability="filesystem.read",
+        operation="filesystem.read",
+        target="/tmp/test",
+    )
+    with pytest.raises(ContractValidationError, match="filesystem.allowed_roots"):
+        evaluate_scope(scope, contract)
+
+
+def test_scope_allows_filesystem_with_non_empty_roots():
+    from shea.app.scopes import FilesystemScope
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        scope = ExecutionScope(
+            scope_id="s-fs-ok",
+            filesystem=FilesystemScope(allowed_roots=frozenset({tmpdir})),
+        )
+        contract = ExecutionContract(
+            contract_id="c-fs-ok",
+            authorization_id="auth-1",
+            capability="filesystem.read",
+            operation="filesystem.read",
+            target=f"{tmpdir}/test",
+        )
+        report = evaluate_scope(scope, contract)
+        assert report.filesystem["allowed_roots"] is EnforcementStatus.ENFORCED
+        assert report.acceptable is True
 
 
 def test_process_spawn_echo(

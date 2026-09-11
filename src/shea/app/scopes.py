@@ -15,6 +15,7 @@ class EnforcementStatus(Enum):
 class FilesystemScope:
     allowed_roots: frozenset[str] = frozenset()
     read_only: bool = False
+    write_only: bool =False
 
 
 @dataclass(frozen=True)
@@ -62,5 +63,6 @@ class ScopeEnforcementReport:
     scope_id: str
     limits: dict[str, EnforcementStatus]
     isolation: dict[str, EnforcementStatus]
+    filesystem: dict[str, EnforcementStatus]
     acceptable: bool
     detail: str = ""

@@ -77,7 +77,7 @@ class ExecutionSupervisor:
 
         enforcement: ScopeEnforcementReport | None = None
         if contract.scope is not None:
-            enforcement = evaluate_scope(contract.scope)
+            enforcement = evaluate_scope(contract.scope, contract)
 
         now = self._clock.now()
         receipt = ExecutionReceipt(
