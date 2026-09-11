@@ -112,60 +112,67 @@ class PlanRunner:
                     f"got {current.state.value!r}"
                 )
 
-            self._set_step_state(plan, step, STEP_RUNNING)
+            try:
+                self._set_step_state(plan, step, STEP_RUNNING)
 
-            capabilities = self._tools.get_declaration(step.tool).capabilities
-            decision_outcome = self._decision.evaluate_and_authorize(
-                current,
-                capabilities=capabilities,
-                plan=plan,
-                step=step,
-                arguments=dict(step.arguments),
-                acting_user=acting_user,
-                # Whole-run ack: caller already confirmed the multi-step run.
-                # Each step still gets a fresh bound Authorization + nonce.
-                explicit_user_ack=explicit_user_ack,
-            )
-            current = decision_outcome.task
+                capabilities = self._tools.get_declaration(step.tool).capabilities
+                decision_outcome = self._decision.evaluate_and_authorize(
+                    current,
+                    capabilities=capabilities,
+                    plan=plan,
+                    step=step,
+                    arguments=dict(step.arguments),
+                    acting_user=acting_user,
+                    explicit_user_ack=explicit_user_ack,
+                )
+                current = decision_outcome.task
 
-            request = ToolRequest(
-                request_id=current.request_id,
-                tool=step.tool,
-                action=step.description or step.tool,
-                arguments=dict(step.arguments),
-            )
-            exec_result = self._execution.execute(current, request)
-            results.append(exec_result)
-            current = exec_result.task
+                request = ToolRequest(
+                    request_id=current.request_id,
+                    tool=step.tool,
+                    action=step.description or step.tool,
+                    arguments=dict(step.arguments),
+                )
+                exec_result = self._execution.execute(current, request)
+                results.append(exec_result)
+                current = exec_result.task
 
-            if exec_result.outcome is not ExecutionOutcome.SUCCESS:
-                self._set_step_state(plan, step, STEP_FAILED)
-                stopped_early = True
-                break
+                if exec_result.outcome is not ExecutionOutcome.SUCCESS:
+                    print(f"\n[DEBUG] Execution failed: {exec_result.response.error}")
+                    self._set_step_state(plan, step, STEP_FAILED)
+                    stopped_early = True
+                    break
 
-            if current.state is not TaskState.VERIFYING:
-                self._set_step_state(plan, step, STEP_FAILED)
-                stopped_early = True
-                break
+                if current.state is not TaskState.VERIFYING:
+                    print(f"\n[DEBUG] Task not VERIFYING after execute: {current.state}")
+                    self._set_step_state(plan, step, STEP_FAILED)
+                    stopped_early = True
+                    break
 
-            scan = self._security.scan_output(
-                current, step.tool, exec_result.response.data if exec_result.response else None
-            )
-            if scan.flagged:
-                self._set_step_state(plan, step, STEP_FAILED)
-                stopped_early = True
-                break
+                scan = self._security.scan_output(
+                    current, step.tool, exec_result.response.data if exec_result.response else None
+                )
+                if scan.flagged:
+                    print(f"\n[DEBUG] Security scan flagged: {scan.reason}")
+                    self._set_step_state(plan, step, STEP_FAILED)
+                    stopped_early = True
+                    break
 
-            ver = self._verification.verify(current, more_steps=more_steps)
-            current = ver.task
+                ver = self._verification.verify(current, more_steps=more_steps)
+                current = ver.task
 
-            if not ver.verification.verified:
-                self._set_step_state(plan, step, STEP_FAILED)
-                stopped_early = True
-                break
+                if not ver.verification.verified:
+                    print(f"\n[DEBUG] Verification rejected: {ver.verification.explanation}")
+                    self._set_step_state(plan, step, STEP_FAILED)
+                    stopped_early = True
+                    break
 
-            self._set_step_state(plan, step, STEP_COMPLETED)
-            completed_count += 1
+                self._set_step_state(plan, step, STEP_COMPLETED)
+                completed_count += 1
+
+            except Exception as err:
+                print(f"\n[DEBUG EXCEPTION IN STEP]: {type(err).__name__}: {err}")
+                raise
 
             if not more_steps:
                 break

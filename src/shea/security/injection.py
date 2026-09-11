@@ -27,6 +27,7 @@ DEFAULT_INJECTION_PHRASES: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class InjectionScanResult:
+    reason: str
     flagged: bool
     matched_phrases: tuple[str, ...] = ()
 
@@ -38,4 +39,8 @@ class PromptInjectionDetector:
     def scan(self, text: str) -> InjectionScanResult:
         normalized = text.lower()
         matched = tuple(phrase for phrase in self.phrases if phrase in normalized)
-        return InjectionScanResult(flagged=bool(matched), matched_phrases=matched)
+        return InjectionScanResult(
+            flagged=bool(matched),
+            matched_phrases=matched,
+            reason="Matched injection phrase(s)." if matched else "",
+        )

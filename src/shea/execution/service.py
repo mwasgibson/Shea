@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shea.audit.recorder import AuditRecorder
+from shea.app.adapters.tool_executor import ToolExecutorAdapter
+from shea.app.contracts import ExecutionContract
+from shea.app.supervisor import ExecutionSupervisor
 from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
@@ -144,6 +147,7 @@ class ExecutionService:
         self,
         *,
         tool_executor: ToolExecutor,
+        execution_supervisor: ExecutionSupervisor,
         orchestrator: Orchestrator,
         decision_repository: DecisionRepository,
         authorization_repository: AuthorizationRepository,
@@ -156,6 +160,7 @@ class ExecutionService:
         clock: Clock,
     ) -> None:
         self._tool_executor = tool_executor
+        self._execution_supervisor = execution_supervisor
         self._orchestrator = orchestrator
         self._decisions = decision_repository
         self._tool_executions = tool_execution_repository
@@ -166,6 +171,24 @@ class ExecutionService:
         self._security = security_service
         self._uow = unit_of_work
         self._clock = clock
+        self._execution_supervisor.ensure_adapter(ToolExecutorAdapter(tool_executor))
+        
+    @staticmethod
+    def _map_app_outcome(outcome: object) -> ExecutionOutcome:
+        value = getattr(outcome, "value", str(outcome))
+
+        mapping = {
+            "SUCCESS": ExecutionOutcome.SUCCESS,
+            "FAILURE": ExecutionOutcome.FAILURE,
+            "UNKNOWN": ExecutionOutcome.UNKNOWN,
+        }
+
+        try:
+            return mapping[str(value).upper()]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Unsupported app execution outcome: {value!r}"
+            ) from exc
 
     def execute(self, task: Task, request: ToolRequest) -> ExecutionOutcomeRecord:
         if task.state is not TaskState.RUNNING:
@@ -219,60 +242,89 @@ class ExecutionService:
         authorized_capabilities = frozenset(decision.capabilities)
 
         try:
-            result = self._tool_executor.execute(request, authorized_capabilities)
+            self._tool_executor.validate_capabilities(request, authorized_capabilities)
         except CapabilityNotAuthorizedError as exc:
-            with self._uow:
-                self._audit.record(
-                    actor="execution_service",
-                    component="execution.tool",
-                    event_type="execution.capability_denied",
-                    action=request.action,
-                    result="denied",
-                    request_id=task.request_id,
-                    task_id=task.id,
-                    metadata={
-                        "tool": request.tool,
-                        "missing": sorted(exc.missing_capabilities),
-                    },
-                )
-                self._tool_executions.save(
-                    ToolExecutionRecord(
-                        id=self._ids.new_id(),
-                        task_id=task.id,
-                        tool=request.tool,
-                        action=request.action,
-                        outcome=ExecutionOutcome.FAILURE,
-                        success=False,
-                        error=str(exc),
-                        idempotency_key=idempotency_key,
-                    )
-                )
+            self._audit.record(
+                actor="execution_service",
+                component="execution.tool",
+                event_type="execution.capability_denied",
+                action=request.action,
+                result="denied",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={
+                    "tool": request.tool,
+                    "missing_capabilities": sorted(exc.missing_capabilities),
+                },
+            )
             raise
-        except TimeoutError as exc:
-            with self._uow:
-                self._audit.record(
-                    actor="execution_service",
-                    component="execution.tool",
-                    event_type="execution.timeout",
-                    action=request.action,
-                    result="timeout",
-                    request_id=task.request_id,
-                    task_id=task.id,
-                    metadata={"tool": request.tool},
-                )
-                self._tool_executions.save(
-                    ToolExecutionRecord(
-                        id=self._ids.new_id(),
-                        task_id=task.id,
-                        tool=request.tool,
-                        action=request.action,
-                        outcome=ExecutionOutcome.UNKNOWN,
-                        success=False,
-                        error=str(exc),
-                        idempotency_key=idempotency_key,
-                    )
-                )
-            raise
+
+        authorization = self._authorizations.list_by_task(task.id)[-1]
+
+        contract = ExecutionContract(
+            contract_id=self._ids.new_id(),
+            authorization_id=authorization.id,
+            capability=(
+                sorted(authorized_capabilities)[0]
+                if authorized_capabilities
+                else f"tool.{request.tool}"
+            ),
+            operation=f"tool.{request.tool}.{request.action}",
+            target=request.tool,
+            arguments=dict(request.arguments),
+            expires_at=authorization.expires_at,
+            metadata={
+                "execution_backend": "tool_executor",
+                "tool": request.tool,
+                "action": request.action,
+                "request_id": request.request_id,
+                "tool_context": dict(request.context),
+                "_authorized_capabilities": tuple(
+                    sorted(authorized_capabilities)
+                ),
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+        supervision = self._execution_supervisor.execute(contract)
+        raw_evidence = supervision.adapter_result.evidence or {}
+        evidence_data = raw_evidence.get("data", raw_evidence)
+
+        response = ToolResponse(
+            success=self._map_app_outcome(
+                supervision.adapter_result.outcome
+            )
+            is ExecutionOutcome.SUCCESS,
+            data=evidence_data,
+            error=supervision.adapter_result.error,
+            metadata={
+                "receipt_id": supervision.receipt.id,
+                "attempt_id": supervision.attempt.id,
+                "evidence_id": supervision.evidence_id,
+            },
+        )
+
+        response = ToolResponse(
+            success=self._map_app_outcome(
+                supervision.adapter_result.outcome
+            )
+            is ExecutionOutcome.SUCCESS,
+            data=supervision.adapter_result.evidence.get("data"),
+            error=supervision.adapter_result.error,
+            metadata={
+                "receipt_id": supervision.receipt.id,
+                "attempt_id": supervision.attempt.id,
+                "evidence_id": supervision.evidence_id,
+            },
+        )
+
+        result = ExecutionOutcomeRecord(
+            response=response,
+            outcome=self._map_app_outcome(
+                supervision.adapter_result.outcome
+            ),
+            task=task,
+        )
         with self._uow:
             self._tool_executions.save(
                 ToolExecutionRecord(
@@ -296,7 +348,13 @@ class ExecutionService:
                 result=result.outcome.value.lower(),
                 request_id=task.request_id,
                 task_id=task.id,
-                metadata={"tool": request.tool, "success": result.response.success},
+                metadata={
+                    "tool": request.tool,
+                    "success": result.response.success,
+                    "receipt_id": supervision.receipt.id,
+                    "attempt_id": supervision.attempt.id,
+                    "evidence_id": supervision.evidence_id,
+                },
             )
 
             # Consume one-shot auth only on durable SUCCESS
@@ -309,7 +367,8 @@ class ExecutionService:
                         self._authorizations.save(auth)
 
             advanced_task = self._orchestrator.advance(
-                task.id, _ADVANCE_EVENT_BY_OUTCOME[result.outcome]
+                task.id,
+                _ADVANCE_EVENT_BY_OUTCOME[result.outcome],
             )
 
         return ExecutionOutcomeRecord(
@@ -360,20 +419,20 @@ class ExecutionService:
                 raise AuthorizationBindingMismatchError(
                     task.id, "step", auth.step_hash, None
                 )
-            matched = False
-            for step in current_plan.steps:
-                # Prefer identity by tool+args once multi-step exists; tool match for now
-                if step.tool == request.tool:
-                    current_step_hash = compute_step_hash(step)
-                    if auth.step_hash != current_step_hash:
-                        raise AuthorizationBindingMismatchError(
-                            task.id, "step", auth.step_hash, current_step_hash
-                        )
-                matched = True
-                break
-            if not matched:
+            matching_step = next(
+                (
+                    s
+                    for s in current_plan.steps
+                    if s.tool == request.tool and compute_step_hash(s) == auth.step_hash
+                ),
+                None,
+            )
+            if matching_step is None:
+                # If no step has this exact hash, compute candidate hash for diagnostic
+                candidate = next((s for s in current_plan.steps if s.tool == request.tool), None)
+                candidate_hash = compute_step_hash(candidate) if candidate else None
                 raise AuthorizationBindingMismatchError(
-                    task.id, "step", auth.step_hash, None
+                    task.id, "step", auth.step_hash, candidate_hash
                 )
 
         if auth.arguments_hash is not None:

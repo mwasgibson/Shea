@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from shea.audit.recorder import AuditRecorder
+from shea.app.adapters.tool_executor import ToolExecutorAdapter
+from shea.app.supervisor import ExecutionSupervisor
+from shea.app.identity import IdentityResolver, IdentityRevalidator
 from shea.config.resolver import ConfigResolver
 from shea.contracts.models import Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
@@ -272,8 +275,59 @@ def tool_execution_repository(
 
 
 @pytest.fixture
+def execution_supervisor(
+    tool_executor: ToolExecutor,
+    conn: sqlite3.Connection,
+    unit_of_work: SqliteUnitOfWork,
+    clock: FrozenClock,
+    id_generator: SequentialIdGenerator,
+) -> ExecutionSupervisor:
+    receipt_repository = SqliteAppReceiptRepository(
+        conn,
+        unit_of_work=unit_of_work,
+    )
+    attempt_repository = SqliteAppAttemptRepository(
+        conn,
+        unit_of_work=unit_of_work,
+    )
+    evidence_repository = SqliteAppEvidenceRepository(
+        conn,
+        unit_of_work=unit_of_work,
+    )
+    verification_repository = SqliteAppVerificationRepository(
+        conn,
+        unit_of_work=unit_of_work,
+    )
+    idempotency_repository = SqliteAppIdempotencyRepository(
+        conn,
+        unit_of_work=unit_of_work,
+    )
+    recovery_repository = SqliteAppRecoveryRepository(
+        conn,
+        unit_of_work=unit_of_work,
+    )
+
+    adapter = ToolExecutorAdapter(tool_executor)
+
+    return ExecutionSupervisor(
+        adapters=[adapter],
+        receipt_repository=receipt_repository,
+        attempt_repository=attempt_repository,
+        evidence_repository=evidence_repository,
+        verification_repository=verification_repository,
+        idempotency_repository=idempotency_repository,
+        recovery_repository=recovery_repository,
+        identity_resolver=IdentityResolver(),
+        identity_revalidator=IdentityRevalidator(),
+        clock=clock,
+        id_generator=id_generator,
+        unit_of_work=unit_of_work,
+    )
+
+@pytest.fixture
 def execution_service(
     tool_executor: ToolExecutor,
+    execution_supervisor: ExecutionSupervisor,
     orchestrator: Orchestrator,
     authorization_repository: SqliteAuthorizationRepository,
     decision_repository: SqliteDecisionRepository,
@@ -287,6 +341,7 @@ def execution_service(
 ) -> ExecutionService:
     return ExecutionService(
         tool_executor=tool_executor,
+        execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
         decision_repository=decision_repository,
         authorization_repository=authorization_repository,

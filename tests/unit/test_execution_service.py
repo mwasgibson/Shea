@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from shea.audit.recorder import AuditRecorder
+from shea.app.supervisor import ExecutionSupervisor
 from shea.contracts.enums import ExecutionOutcome, RiskLevel, TaskState
 from shea.contracts.models import Decision, Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
@@ -205,6 +206,7 @@ def test_execution_service_transaction_rolls_back_on_audit_failure(
     running_task: Task,
     unit_of_work: SqliteUnitOfWork,
     orchestrator: Orchestrator,
+    execution_supervisor: ExecutionSupervisor,
     tool_executor: ToolExecutor,
     authorization_repository: AuthorizationRepository,
     decision_repository: DecisionRepository,
@@ -236,6 +238,7 @@ def test_execution_service_transaction_rolls_back_on_audit_failure(
     )
     broken_service = ExecutionService(
         tool_executor=tool_executor,
+        execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
         authorization_repository=authorization_repository,
         decision_repository=decision_repository,

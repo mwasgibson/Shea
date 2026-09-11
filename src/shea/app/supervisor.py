@@ -93,6 +93,13 @@ class ExecutionSupervisor:
         self._idempotency_repo = idempotency_repository
         self._recovery_repo = recovery_repository
 
+    def ensure_adapter(self, adapter: Adapter) -> None:
+        for index, existing in enumerate(self._adapters):
+            if existing.name == adapter.name:
+                self._adapters[index] = adapter
+                return
+        self._adapters.append(adapter)
+
     def execute(self, contract: ExecutionContract) -> SupervisionResult:
         self._validate(contract)
         adapter = self._select_adapter(contract)

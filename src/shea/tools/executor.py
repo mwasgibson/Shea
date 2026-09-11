@@ -137,6 +137,18 @@ class ToolExecutor:
 
         outcome = ExecutionOutcome.SUCCESS if response.success else ExecutionOutcome.FAILURE
         return ExecutionResult(response=response, outcome=outcome)
+
+    def validate_capabilities(
+        self,
+        request: ToolRequest,
+        authorized_capabilities: frozenset[str],
+    ) -> None:
+        missing = (
+            self._registry.get_declaration(request.tool).capabilities
+            - authorized_capabilities
+        )
+        if missing:
+            raise CapabilityNotAuthorizedError(request.tool, missing)
     
     def _validate_arguments(
         self, request: ToolRequest, declaration: ToolDeclaration

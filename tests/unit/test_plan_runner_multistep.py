@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from shea.audit.recorder import AuditRecorder
+from shea.app.supervisor import ExecutionSupervisor
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Plan, PlanStep, Task
 from shea.core.orchestrator import Orchestrator
@@ -44,6 +45,7 @@ def workspace(filesystem_policy: FilesystemPolicy) -> Path:
 
 def test_two_step_write_then_read(
     ready_task: Task,
+    execution_supervisor: ExecutionSupervisor,
     orchestrator: Orchestrator,
     decision_service: DecisionService,
     verification_service: VerificationService,
@@ -75,6 +77,7 @@ def test_two_step_write_then_read(
     # Same wiring as conftest / e2e — audit + unit_of_work required
     execution_service = ExecutionService(
         tool_executor=executor,
+        execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
         authorization_repository=authorization_repository,
         decision_repository=decision_repository,
