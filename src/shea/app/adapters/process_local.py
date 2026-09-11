@@ -11,7 +11,6 @@ from shea.app.contracts import (
     ExecutionReceipt,
 )
 from shea.app.enums import AppOutcome
-from shea.app.exceptions import ContractValidationError
 from shea.app.ports.process import AdapterContext
 from shea.app.scopes import ExecutionScope
 
@@ -33,8 +32,18 @@ class LocalProcessAdapter:
         receipt: ExecutionReceipt,
         attempt: ExecutionAttempt,
     ) -> AdapterResult:
-        # Context is expected on contract.metadata for Phase 2 wiring
-        ctx: AdapterContext | None = contract.metadata.get("_adapter_context")
+        raw_ctx = contract.metadata.get("_adapter_context")
+        ctx: AdapterContext | None = (
+            raw_ctx if isinstance(raw_ctx, AdapterContext) else None
+        )
+
+        if ctx is None:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error="process.local requires AdapterContext with scope",
+                evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
+            )
+
         argv = contract.arguments.get("argv")
         if not isinstance(argv, list) or not all(
             isinstance(item, str) for item in cast(list[object], argv)
@@ -42,44 +51,58 @@ class LocalProcessAdapter:
             return AdapterResult(
                 outcome=AppOutcome.FAILURE,
                 error="arguments.argv must be list[str]",
+                evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
             )
-        argv = cast(list[str], argv)
-        if not argv:
-            return AdapterResult(outcome=AppOutcome.FAILURE, error="argv is empty")
+        argv_list = cast(list[str], argv)
+        if not argv_list:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error="argv is empty",
+                evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
+            )
 
-        scope: ExecutionScope | None = None
-        if ctx is not None:
-            scope = ctx.scope
-            self._check_executable_allowed(argv[0], scope)
+        scope: ExecutionScope = ctx.scope
+        allow_err = self._executable_allow_error(argv_list[0], scope)
+        if allow_err is not None:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error=allow_err,
+                evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
+            )
 
-        if scope is not None and scope.process.allow_shell:
+        if scope.process.allow_shell:
             return AdapterResult(
                 outcome=AppOutcome.FAILURE,
                 error="shell execution is not implemented in process.local",
+                evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
             )
 
-        env: dict[str, str] = {}
-        if ctx is not None:
+        if scope.process.inherit_environ:
+            env: dict[str, str] | None = None
+            if ctx.environ_allowlist:
+                # Explicit allowlist replaces full inherit when provided
+                env = dict(ctx.environ_allowlist)
+        else:
             env = dict(ctx.environ_allowlist)
-        elif scope is not None and not scope.process.inherit_environ:
-            env = {}
+            if not ctx.environ_allowlist:
+                env = {}
 
         timeout_s: float | None = None
-        if scope and scope.resources.wall_time_ms is not None:
+        if scope.resources.wall_time_ms is not None:
             timeout_s = scope.resources.wall_time_ms / 1000.0
 
         output_limit = (
             scope.resources.output_bytes
-            if scope and scope.resources.output_bytes is not None
+            if scope.resources.output_bytes is not None
             else 1_000_000
         )
 
         try:
             completed = subprocess.run(  # noqa: S603 — argv list, no shell
-                argv,
+                argv_list,
                 capture_output=True,
                 timeout=timeout_s,
-                env=env if env or (scope and not scope.process.inherit_environ) else None,
+                env=env,
                 shell=False,
                 check=False,
             )
@@ -109,17 +132,19 @@ class LocalProcessAdapter:
                 "returncode": completed.returncode,
                 "stdout": stdout.decode("utf-8", errors="replace"),
                 "stderr": stderr.decode("utf-8", errors="replace"),
-                "argv0": argv[0],
+                "argv0": argv_list[0],
             },
             error=None if outcome is AppOutcome.SUCCESS else f"exit {completed.returncode}",
         )
 
-    def _check_executable_allowed(self, argv0: str, scope: ExecutionScope) -> None:
+    def _executable_allow_error(
+        self, argv0: str, scope: ExecutionScope
+    ) -> str | None:
         allowed = scope.process.allowed_executables
         if not allowed:
-            return
+            # Empty allowlist = deny all (fail closed)
+            return "process scope allowed_executables is empty; refusing spawn"
         name = Path(argv0).name
         if argv0 not in allowed and name not in allowed:
-            raise ContractValidationError(
-                f"executable {argv0!r} not in process scope allowlist"
-            )
+            return f"executable {argv0!r} not in process scope allowlist"
+        return None

@@ -371,29 +371,51 @@
 - [ ] README note for first real tools — not yet written; only a stale
       forward-looking "Next: Phase 9" pointer exists. Writing it now as
       part of this documentation pass.
-- [x] **Flagged, not fixed**: `http.fetch` has a DNS-rebinding TOCTOU gap.
-      `resolve_and_check_url()` resolves DNS and checks the resolved IPs
-      against policy, then returns the *original URL string* — the
-      subsequent `urlopen(url)` call re-resolves DNS itself at connect
-      time, with no guarantee it gets the same address that was just
-      checked. An attacker controlling DNS for the target hostname (or
-      exploiting a short TTL) has a window between the check and the
-      actual connection to redirect it to a private/internal address —
-      exactly the "DNS rebinding" attack research doc Section 18/24 name
-      by name. Properly closing this needs connection-pinning (resolve
-      once, connect to the checked IP directly, still present the
-      original hostname for the `Host` header / TLS SNI) — a real change
-      to how the fetch is performed, not a one-line fix, and out of scope
-      for a documentation pass.
+- [x] **Fixed since flagged**: `http.fetch` DNS-rebinding TOCTOU gap.
+      `resolve_and_check_url()` now returns a `ResolvedUrl` (host, port,
+      `resolved_ip`) instead of just a validated URL string.
+      `http_fetch.py` connects directly to `resolved_ip` — via a new
+      `PinnedHTTPSConnection` for HTTPS (overrides `connect()` to dial the
+      pinned IP, then wraps the socket in TLS with `server_hostname` set
+      to the *original* hostname, so SNI/certificate validation still
+      targets the real host) and a plain `HTTPConnection` constructed
+      with the IP directly for HTTP — while sending an explicit `Host:`
+      header with the original hostname either way. `http.client`'s own
+      `_send_request` detects the explicit `Host` header and skips its
+      normal auto-added one, so there's no duplicate/conflicting header.
+      No re-resolution happens between the check and the connection in
+      either path. Verified: `tests/unit/test_dns_pinning.py` (4 tests).
+- [x] Full suite re-verified after syncing this round of commits
+      (`http.fetch` pinning, PlanRunner step-state, the `shea.app`
+      execution-plane subsystem documented in `todo_interaction.md`):
+      354/354 pytest, mypy --strict clean (124 source files), ruff clean.
 
 ## Phase 10: Multi-Step Execution
 
-- [ ] Persist `PlanStep.state` through the runner
-- [ ] PlanRunner product rules (stop on failure/injection; ack policy for steps after the first)
-- [ ] E2E: ≥2 steps (prefer write then read from Phase 9 tools)
-- [ ] Distinct authorization per step (no nonce reuse across steps)
-- [ ] Integration tests for `step_verified` → READY → authorize → next step
-- [ ] README multi-step section; pytest / mypy / ruff green
+- [x] Persist `PlanStep.state` through the runner — `PlanRunner._set_step_state()`
+      mutates `step.state` and calls `self._plans.save(plan)` on every
+      transition (RUNNING → COMPLETED/FAILED/SKIPPED), a real DB write
+      each time, not just an in-memory loop variable. Already-`COMPLETED`
+      steps are skipped on a fresh run (resume-friendly): `pending_indices`
+      is computed from persisted state, not assumed to start at step 0.
+- [x] PlanRunner product rules — stops on execution FAILURE/UNKNOWN, on
+      `current.state` not reaching VERIFYING, on `SecurityService.
+      scan_output()` flagging the tool's own output (injection
+      quarantine — a step doesn't get to use output Security flagged as
+      suspicious to justify continuing), and on verification failure.
+      Each step gets its own `Decision` + `Authorization` with a fresh
+      nonce — `explicit_user_ack` is a whole-run acknowledgement from the
+      caller, but nonce reuse across steps never happens.
+- [x] Unit tests: `tests/unit/test_plan_runner_multistep.py` (149 lines)
+- [ ] E2E: ≥2 steps against Phase 9's real tools (write then read) — the
+      multistep tests above exercise the state machine and step-skip
+      logic; nothing yet drives two *real* `filesystem` tool calls
+      through the full pipeline back to back
+- [x] Distinct authorization per step (no nonce reuse across steps) — see
+      above
+- [x] Integration tests for `step_verified` → READY → authorize → next
+      step — covered within `test_plan_runner_multistep.py`
+- [ ] README multi-step section — not yet written
 
 ## Not yet built — explicitly flagged, not silently missing
 
@@ -412,10 +434,11 @@
       equivalent) — `SandboxedExecutionBoundary` enforces timeout and
       redaction only; a thread timeout does not terminate an underlying
       process, socket, or file handle a tool already opened
-- [x] `http.fetch` connection-pinning against DNS rebinding — see the
-      flagged item under Phase 9 above; `resolve_and_check_url()` checks
-      resolved IPs but the actual `urlopen()` call re-resolves DNS itself
-      at connect time, with no guarantee it's the same address
+- [x] ~~`http.fetch` connection-pinning against DNS rebinding~~ — done
+      (see the Phase 9 item above): `resolve_and_check_url()` now returns
+      the resolved IP and `http_fetch.py` connects directly to it via
+      `PinnedHTTPSConnection`/`HTTPConnection`, so the connection can't be
+      redirected by a DNS change between the check and the connect.
 - [x] ~~Tool schemas~~ — done in Phase 8 (`argument_schema`, elevated
       capability gate, executor validation)
 - [x] ~~Authorization binding~~ — done in Phase 8 (hashes, expiry, nonce,

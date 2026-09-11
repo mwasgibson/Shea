@@ -11,7 +11,7 @@ from shea.app.contracts import (
     ExecutionReceipt,
     effective_requested_target,
 )
-from shea.app.enums import AttemptState, ReceiptState
+from shea.app.enums import AppOutcome, AttemptState, ReceiptState
 from shea.app.environment import probe_environment
 from shea.app.exceptions import ContractValidationError, ReceiptRequiredError
 from shea.app.identity import IdentityResolver, IdentityRevalidator
@@ -109,11 +109,8 @@ class ExecutionSupervisor:
         if self._receipts.get(receipt.id) is None:
             raise ReceiptRequiredError(contract.contract_id)
 
-        attempt.state = AttemptState.INVOKED
-        attempt.invoked_at = self._clock.now()
-        with self._uow:
-            self._attempts.save(attempt)
-
+        # Revalidate BEFORE marking INVOKED so a failed check does not
+        # leave an attempt stuck in INVOKED with no finalize.
         verified = self._identity_revalidator.verify(
             resolved, contract.identity_requirements, phase="pre_invoke"
         )
@@ -133,7 +130,34 @@ class ExecutionSupervisor:
                 },
             )
 
-        result = adapter.invoke(contract, receipt, attempt)
+        attempt.state = AttemptState.INVOKED
+        attempt.invoked_at = self._clock.now()
+        with self._uow:
+            self._attempts.save(attempt)
+
+        try:
+            result = adapter.invoke(contract, receipt, attempt)
+        except Exception as exc:
+            # noqa: BLE001 — adapters are untrusted code;
+            # anything they raise must still finalize the receipt/attempt
+            # rather than leave them dangling in ATTEMPTING/INVOKED forever.
+            # Deliberately FAILURE, not UNKNOWN: an exception raised before
+            # any external side effect was attempted (argument validation,
+            # policy checks, etc. — the common case) means nothing happened,
+            # so FAILURE is accurate. An adapter that wants to report a
+            # side effect might not have completed should catch its own
+            # OSError/TimeoutExpired-style failures internally and return
+            # AdapterResult(outcome=UNKNOWN, ...) itself, as
+            # LocalProcessAdapter already does for subprocess timeouts.
+            result = AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error=f"adapter raised: {exc}",
+                evidence={
+                    "receipt_id": receipt.id,
+                    "attempt_id": attempt.id,
+                    "adapter": adapter.name,
+                },
+            )
 
         attempt.state = AttemptState.FINALIZED
         attempt.finalized_at = self._clock.now()
