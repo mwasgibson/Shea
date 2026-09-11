@@ -39,7 +39,7 @@ from shea.app.recovery import (
 from shea.app.scope_enforce import evaluate_scope
 from shea.app.scopes import ScopeEnforcementReport
 from shea.app.verification import AppVerificationRecord, policy_for_operation
-from shea.app.verify_engine import evidence_from_adapter, evaluate_verification
+from shea.app.verify_engine import evaluate_verification, evidence_from_adapter
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.unit_of_work import UnitOfWork
@@ -133,6 +133,7 @@ class ExecutionSupervisor:
             state=ReceiptState.CREATED,
             created_at=now,
             adapter_name=adapter.name,
+            metadata=dict(contract.metadata),
         )
         attempt = ExecutionAttempt(
             id=self._ids.new_id(),
@@ -353,17 +354,25 @@ class ExecutionSupervisor:
             if existing.state is IdempotencyState.CONFLICT:
                 raise ContractValidationError(f"idempotency key conflict: {key}")
         now = self._clock.now()
-        with self._uow:
-            self._idempotency_repo.save(
-                IdempotencyRecord(
-                    key=key,
-                    receipt_id=None,
-                    state=IdempotencyState.IN_PROGRESS,
-                    outcome=None,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
+        record = IdempotencyRecord(
+            key=key,
+            receipt_id=None,
+            state=IdempotencyState.IN_PROGRESS,
+            outcome=None,
+            created_at=now,
+            updated_at=now,
+        )
+        reserve = getattr(self._idempotency_repo, "reserve", None)
+        if reserve is not None:
+            try:
+                reserve(record)
+            except Exception as exc:
+                raise ContractValidationError(
+                    f"idempotency key already reserved: {key}"
+                ) from exc
+        else:
+            with self._uow:
+                self._idempotency_repo.save(record)
 
     def _bind_idempotency_receipt(self, key: str, receipt_id: str) -> None:
         if self._idempotency_repo is None:

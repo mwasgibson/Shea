@@ -9,7 +9,9 @@ from shea.app.scopes import (
 )
 
 
-def evaluate_scope(scope: ExecutionScope, contract: ExecutionContract | None = None) -> ScopeEnforcementReport:
+def evaluate_scope(
+    scope: ExecutionScope, contract: ExecutionContract | None = None
+) -> ScopeEnforcementReport:
     """Report what V1 can enforce. Required isolation/limits that are
     UNSUPPORTED fail closed (EP §5.4).
     

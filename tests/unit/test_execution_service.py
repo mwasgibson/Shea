@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 
-from shea.audit.recorder import AuditRecorder
 from shea.app.supervisor import ExecutionSupervisor
+from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, RiskLevel, TaskState
 from shea.contracts.models import Decision, Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator

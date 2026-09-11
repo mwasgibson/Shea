@@ -47,6 +47,25 @@ class SqliteAppIdempotencyRepository:
                 },
             )
 
+    def reserve(self, record: IdempotencyRecord) -> None:
+        """Atomically claim a key; the UNIQUE constraint arbitrates races."""
+        with self._uow:
+            self._conn.execute(
+                """
+                INSERT INTO app_idempotency (
+                    key, receipt_id, state, outcome, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.key,
+                    record.receipt_id,
+                    record.state.value,
+                    record.outcome.value if record.outcome else None,
+                    record.created_at.isoformat(),
+                    record.updated_at.isoformat(),
+                ),
+            )
+
 
 def _row_to_idempotency(row: sqlite3.Row) -> IdempotencyRecord:
     return IdempotencyRecord(

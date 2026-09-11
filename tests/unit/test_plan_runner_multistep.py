@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from shea.audit.recorder import AuditRecorder
 from shea.app.supervisor import ExecutionSupervisor
+from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Plan, PlanStep, Task
 from shea.core.orchestrator import Orchestrator

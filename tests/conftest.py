@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from shea.audit.recorder import AuditRecorder
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
-from shea.app.supervisor import ExecutionSupervisor
 from shea.app.identity import IdentityResolver, IdentityRevalidator
+from shea.app.supervisor import ExecutionSupervisor
+from shea.audit.recorder import AuditRecorder
 from shea.config.resolver import ConfigResolver
 from shea.contracts.models import Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator

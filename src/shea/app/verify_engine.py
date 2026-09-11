@@ -104,7 +104,9 @@ def evaluate_verification(
             continue
         if required == "source_and_destination_exist" and post == "source_and_destination_exist":
             continue
-        if required == "source_absent_destination_exists" and post == "source_absent_destination_exists":
+        if required == (
+            "source_absent_destination_exists" and post == "source_absent_destination_exists"
+            ):
             continue
 
         # Required postcondition not satisfied
@@ -117,10 +119,14 @@ def evaluate_verification(
             explanation_parts.append(f"postcondition not met: {required}")
         elif adapter_result.outcome is AppOutcome.UNKNOWN:
             outcome = AppOutcome.UNKNOWN
-            explanation_parts.append(f"unknown and postcondition unchecked: {required}")
+            explanation_parts.append(
+                f"unknown and postcondition unchecked: {required}"
+            )
 
     if not explanation_parts:
-        explanation_parts.append("policy satisfied" if outcome is AppOutcome.SUCCESS else outcome.value)
+        explanation_parts.append(
+            "policy satisfied" if outcome is AppOutcome.SUCCESS else outcome.value
+        )
 
     return AppVerificationRecord(
         id=verification_id,

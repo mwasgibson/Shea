@@ -19,6 +19,13 @@ class InMemoryReceiptRepository:
                 return r
         return None
 
+    def list_unfinalized(self) -> list[ExecutionReceipt]:
+        return [
+            receipt
+            for receipt in self._by_id.values()
+            if receipt.outcome is None
+        ]
+
 
 class InMemoryAttemptRepository:
     def __init__(self) -> None:

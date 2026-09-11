@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shea.audit.recorder import AuditRecorder
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.contracts import ExecutionContract
 from shea.app.supervisor import ExecutionSupervisor
+from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
@@ -278,6 +278,7 @@ class ExecutionService:
                 "tool": request.tool,
                 "action": request.action,
                 "request_id": request.request_id,
+                "task_id": task.id,
                 "tool_context": dict(request.context),
                 "_authorized_capabilities": tuple(
                     sorted(authorized_capabilities)

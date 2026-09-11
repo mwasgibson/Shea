@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from shea.audit.recorder import AuditRecorder
 from shea.app.supervisor import ExecutionSupervisor
+from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, RecoveryStrategy, TaskState
 from shea.contracts.models import ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator

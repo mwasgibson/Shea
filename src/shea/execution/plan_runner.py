@@ -172,7 +172,9 @@ class PlanRunner:
 
             except Exception as err:
                 print(f"\n[DEBUG EXCEPTION IN STEP]: {type(err).__name__}: {err}")
-                raise
+                self._set_step_state(plan, step, STEP_FAILED)
+                stopped_early = True
+                break
 
             if not more_steps:
                 break

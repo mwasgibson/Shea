@@ -62,6 +62,26 @@ def test_deterministic_pipeline_reaches_ready(
     assert isinstance(outcome, PlanningOutcome)
     assert outcome.task.state == TaskState.READY
     assert outcome.task.plan_id == outcome.plan.id
+
+def test_planning_service_preserves_request_source(
+    planning_service: PlanningService,
+    deterministic_matcher: DeterministicIntentMatcher,
+    template_registry: PlanTemplateRegistry,
+    tool_registry: ToolRegistry,
+) -> None:
+    register_weather_tool(tool_registry)
+    deterministic_matcher.register(
+        "weather", IntentDraft(type="weather.lookup", goal="check the weather")
+    )
+    template_registry.register("weather.lookup", build_weather_lookup)
+
+    outcome = planning_service.create_and_plan(
+        session_id="session-1",
+        request_text="what's the weather",
+        source="cli",
+    )
+
+    assert outcome.intent.source == "cli"
     assert outcome.intent.type == "weather.lookup"
     assert len(outcome.plan.steps) == 1
     assert outcome.plan.steps[0].tool == "weather"

@@ -83,8 +83,9 @@ def test_scope_fails_closed_on_empty_filesystem_roots_with_filesystem_op():
 
 
 def test_scope_allows_filesystem_with_non_empty_roots():
-    from shea.app.scopes import FilesystemScope
     import tempfile
+
+    from shea.app.scopes import FilesystemScope
     with tempfile.TemporaryDirectory() as tmpdir:
         scope = ExecutionScope(
             scope_id="s-fs-ok",
@@ -104,7 +105,8 @@ def test_scope_allows_filesystem_with_non_empty_roots():
 
 def test_process_spawn_echo(
     clock: Clock, id_generator: IdGenerator, unit_of_work: UnitOfWork,
-    app_receipt_repository: InMemoryReceiptRepository, app_attempt_repository: InMemoryAttemptRepository
+    app_receipt_repository: InMemoryReceiptRepository, 
+    app_attempt_repository: InMemoryAttemptRepository,
 ):
     scope = ExecutionScope(
         scope_id="s-proc",

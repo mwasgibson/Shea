@@ -8,13 +8,12 @@ the controlled boundary between authorized work and platform adapters
 invocation, identity resolution/revalidation, and scope enforcement as
 first-class concepts distinct from the Task state machine.
 
-**Current status: standalone foundation, not yet wired to the rest of the
-system.** `ExecutionSupervisor` is not called from `shea.execution`,
-`shea.decision`, or `shea.tools` anywhere yet — this is its own module
-with its own tests, built ahead of the integration point rather than
-retrofitted into `ExecutionService`. That's not a gap to silently paper
-over: until something calls `ExecutionSupervisor.execute()` from the main
-pipeline, none of this affects real task execution one way or the other.
+**Current status: supervised execution is wired into the main tool path.**
+`ExecutionService` invokes `ExecutionSupervisor` for authorized tool calls,
+and `InteractionService` connects planning and `PlanRunner` without bypassing
+the safety pipeline. Native application/browser adapters and a bundled
+transport remain out of scope; callers provide the transport and use the
+public interaction service.
 
 ## EP Phase 1: Contracts, Receipts, Attempts, Supervisor (foundation)
 

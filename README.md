@@ -1,4 +1,4 @@
-# SHEA — Phase 1–9 complete
+# SHEA — execution pipeline and recovery
 
 Phase 1 is the foundation layer (state machine, persistence, contracts,
 config). Phase 2 adds the Decision/Policy/Risk engine — the only
@@ -23,8 +23,9 @@ register gates, and a multi-step state-machine foundation (`step_verified`
 → READY). Phase 9 (complete) adds the first real tools that touch the
 outside world under that hardening: `filesystem.read`/`write` and an
 opt-in `http.fetch`, gated by runtime path/DNS re-checks that close what
-pure policy string-matching can't. Next: Phase 10 (multi-step product
-e2e).
+pure policy string-matching can't. The current pipeline also includes
+durable multi-step execution, supervised app receipts, bounded recovery,
+and a public `InteractionService` request boundary.
 
 Three of Phase 8/9's features shipped with real bugs that a full
 verification pass — not just reading the code — caught and fixed: the
@@ -42,7 +43,7 @@ quietly into "done."
 | `shea.contracts` | Typed, framework-free data shapes: `Request`, `Intent`, `Task`, `Plan`, `PlanStep`, `Decision`, `RiskAssessment`, `Authorization`, `AuditEvent`, `ToolRequest`/`ToolResponse`, `ModelResponse`, `ToolExecutionRecord`, `VerificationRecord`, `RecoveryAttempt`. |
 | `shea.ports` | Abstract interfaces (`TaskRepository`, `PlanRepository`, `IntentRepository`, `DecisionRepository`, `RiskAssessmentRepository`, `AuthorizationRepository`, `ToolExecutionRepository`, `VerificationRepository`, `RecoveryAttemptRepository`, `AuditSink`, `Clock`, `IdGenerator`, `ModelProvider`, `UnitOfWork`) — the hexagonal boundary. Nothing concrete lives here. |
 | `shea.state_machine` | Authoritative transition table (Appendix A, plus `execution_unknown` and `step_verified`) and `next_state()` — the only function allowed to change task state. Illegal transitions raise `IllegalTransitionError`. |
-| `shea.persistence.sqlite` | Concrete adapters implementing the ports above: connection handling, numbered SQL migrations (0001–0005 — hash-chain, authorization-binding, and recovery-delay columns were folded directly into the original schema-defining migrations rather than added as new ones, since nothing has shipped a real deployment yet), repositories, and `audit_chain.py` (`verify_audit_chain` — walks `audit_events` and reports `content_altered`/`link_broken`/`sequence_gap` breaks). SQLite is the source of truth for task/plan state — not an in-memory cache with SQLite as backup. |
+| `shea.persistence.sqlite` | Concrete adapters implementing the ports above: connection handling, numbered SQL migrations through `0007`, repositories, and `audit_chain.py` (`verify_audit_chain` — walks `audit_events` and reports `content_altered`/`link_broken`/`sequence_gap` breaks). SQLite is the source of truth for task/plan state — not an in-memory cache with SQLite as backup. |
 | `shea.config` | The six-layer configuration resolver (System → Machine → User → Profile → Project → Session), with `security_invariant_keys` that can only ever be set at the System layer regardless of what any other layer says. |
 | `shea.core` | The `Orchestrator` — thin coordination of task lifecycle. Creates tasks, advances them via the state machine, attaches plans, persists, and audits every attempt (success *and* rejection). Each state write and its audit event commit or roll back together via a shared `UnitOfWork`, not as two independent commits. |
 | `shea.model` | `ModelProvider` port (`generate()`/`health()`/`capabilities()`) and `ScriptedModelProvider` — a deterministic queued-response double. No real LLM API integration ships here; that's the Provider Routing phase's job. |
@@ -51,7 +52,7 @@ quietly into "done."
 | `shea.decision` | `PolicyEngine`, `RiskEngine`, confirmation-tier rules, and `DecisionService` — sole caller of `authorize_and_run`; issues content-bound `Authorization` records (plan/step/argument hashes, expiry, nonce) when a plan is present. |
 | `shea.tools` | `ToolDeclaration` + `ToolRegistry` (capability profiles; optional `argument_schema`; elevated capabilities require a schema at register) and `ToolExecutor` (capability gate *before* handler lookup, schema validation when declared — defaults it computes are actually applied to the request via `dataclasses.replace`, not just checked and discarded — SUCCESS/FAILURE/UNKNOWN outcomes). `schema.py` is the pure validation engine; `provider.py`'s `ToolProvider` protocol + `load_tools()` let a registration bundle (see `shea.tools.builtin`) attach declarations/handlers/verifiers without ever executing or authorizing anything itself. |
 | `shea.tools.builtin` | The first tools that touch the outside world: `filesystem.read`/`filesystem.write` and an opt-in `http.fetch`, registered via `register_builtin_tools()`. Not wired into any default fixture — a caller has to ask for these explicitly, and `http.fetch` needs `include_http_fetch=True` on top of that. |
-| `shea.execution` | `ExecutionService` — looks up authorized capabilities from the persisted `Decision`, verifies authorization content-binding, requires `SecurityService`, enforces idempotency (SUCCESS/UNKNOWN suppress), runs one tool call through `ToolExecutor`, persists `ToolExecutionRecord`, advances by outcome. `PlanRunner` walks multi-step plans with per-step binding (product multi-step is Phase 10). |
+| `shea.execution` | `ExecutionService` — looks up authorized capabilities from the persisted `Decision`, verifies authorization content-binding, requires `SecurityService`, enforces idempotency (SUCCESS/UNKNOWN suppress), runs one tool call through the supervised app boundary, persists `ToolExecutionRecord`, and advances by outcome. `PlanRunner` walks durable multi-step plans with per-step binding and resume-safe completion states. |
 | `shea.verification` | `Verifier`/`VerifierRegistry` and `VerificationService` — sole caller of `verified` / `verification_failed` / `step_verified` (intermediate steps return to READY for the next authorization). Execution success does not force verification to agree. |
 | `shea.recovery` | `Compensator` abstraction + `RecoveryService` — bounded Saga-style retry (`FAILED -> RECOVERING -> READY \| FAILED`), counted from persisted attempts, and `resolve_blocked()` for tasks Phase 3's `UNKNOWN` execution outcome routes to `BLOCKED`. `RetryController` is the single source of truth for the attempt budget and supplies the backoff delay persisted on each `RecoveryAttempt`. |
 | `shea.security` | `NetworkPolicy`/`FilesystemPolicy` (SSRF and path-scope protection, pure) plus `runtime_checks.py`'s `realpath_under_roots`/`resolve_and_check_url` (the filesystem/DNS re-checks a pure policy can't do — symlink resolution, live DNS resolution), `SecretRedactor` (pattern-based, recursive), `PromptInjectionDetector` (heuristic), `SecurityGate` (pure pre-execution request scanner), `binding.py` (pure content-hashing for `Authorization` — plan/step/argument hashes, nonce generation), `SecurityService` — the only caller of `Orchestrator.advance(task_id, "security_halt")`; its violation path (violation audit -> task halt -> transition audit) commits or rolls back as one transaction. Also `SandboxedExecutionBoundary` — the real "Sandbox" pipeline stage (timeout + redaction). |
@@ -254,21 +255,11 @@ default trust-success. Confirmed opt-in only: not wired into `tests/
 conftest.py`'s default `tool_registry` fixture, and `include_http_fetch`
 defaults to `False`.
 
-**Flagged, not fixed:** `http.fetch` has a DNS-rebinding TOCTOU gap.
-`resolve_and_check_url()` checks the resolved IPs at call time and
-returns the original URL string, but the subsequent `urlopen()` call
-re-resolves DNS itself at actual connect time — with no guarantee it's
-the same address that was just checked. An attacker controlling DNS for
-the target hostname (or exploiting a short TTL) has a window to redirect
-the real connection to a private address after the check passes. Properly
-closing this needs connection-pinning (resolve once, connect to the
-checked IP directly, still present the original hostname for `Host` /
-TLS SNI) — a real change to how the fetch is performed, not a one-line
-fix, and left open rather than patched over for this pass.
-
-**Next:** Phase 10 — multi-step productization on top of these tools
-(durable `PlanStep` state, distinct authorization per step, a real ≥2-step
-end-to-end test).
+`http.fetch` pins the checked address for the actual connection while
+preserving the original host for HTTP and TLS identity. Filesystem tools
+perform symlink-aware real-path checks and independent post-write
+verification; descriptor-level race elimination remains an operating-system
+hardening boundary rather than a claim made by the pure policy layer.
 
 ## What's deliberately NOT here yet
 
@@ -282,12 +273,8 @@ end-to-end test).
   describe — `realpath_under_roots` does real symlink resolution against
   the actual filesystem, and `resolve_and_check_url` does real DNS
   resolution and re-checks every returned address. What's left is
-  narrower: `http.fetch`'s resolved-and-checked address isn't pinned to
-  the address the actual connection ends up using, so a TOCTOU window
-  remains between the check and the real `urlopen()` call (see the
-  Phase 9 section above)
-- Multi-step plan *product* finish (SM + `PlanRunner` + `step_verified`
-  exist; durable step state and 2+ step e2e are Phase 10)
+  narrower: descriptor-level race elimination remains an operating-system
+  hardening boundary beyond the pure policy checks.
 - Real per-tool Verifiers and Compensators — Phase 4 provides the
   abstractions and honest fallbacks; registering an actual independent
   check for a given tool is that tool's job when it's built

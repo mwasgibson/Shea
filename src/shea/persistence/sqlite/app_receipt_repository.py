@@ -80,6 +80,13 @@ class SqliteAppReceiptRepository:
         ).fetchone()
         return _row_to_receipt(row) if row is not None else None
 
+    def list_unfinalized(self) -> list[ExecutionReceipt]:
+        rows = self._conn.execute(
+            "SELECT * FROM app_receipts WHERE state != ? ORDER BY rowid ASC",
+            (ReceiptState.FINALIZED.value,),
+        ).fetchall()
+        return [_row_to_receipt(row) for row in rows]
+
 
 def _row_to_receipt(row: sqlite3.Row) -> ExecutionReceipt:
     return ExecutionReceipt(

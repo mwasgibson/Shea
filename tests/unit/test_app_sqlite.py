@@ -76,6 +76,7 @@ def test_idempotency_blocks_second_execute(
     app_attempt_repository: AttemptRepository,
 ) -> None:
     import pytest
+
     from shea.app.exceptions import ContractValidationError
 
     run_migrations(conn)

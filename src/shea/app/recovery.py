@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from shea.app.enums import AppOutcome, AttemptState, ReceiptState, RecoveryStatus
 from shea.app.contracts import ExecutionAttempt, ExecutionReceipt
+from shea.app.enums import AppOutcome, AttemptState, ReceiptState, RecoveryStatus
 
 
 @dataclass

@@ -135,14 +135,19 @@ class PlanningService:
         self._model = model_provider
 
     def create_and_plan(
-        self, *, session_id: str, request_text: str, actor: str = "user"
+        self,
+        *,
+        session_id: str,
+        request_text: str,
+        actor: str = "user",
+        source: str = "text",
     ) -> PlanningOutcome:
         request = Request(
             request_id=self._ids.new_id(),
             session_id=session_id,
             actor=actor,
             input=request_text,
-            source="text",
+            source=source,
             created_at=self._clock.now(),
         )
         task = self._orchestrator.create_task(
@@ -150,7 +155,7 @@ class PlanningService:
         )
         task = self._orchestrator.advance(task.id, "start_planning")
 
-        draft = self._parse_intent(task, request_text)
+        draft = self._parse_intent(task, request_text, source=source)
         intent = self._persist_intent(task, draft)
         plan = self._build_and_validate_plan(task, intent, draft)
 
@@ -172,9 +177,18 @@ class PlanningService:
 
         return PlanningOutcome(task=ready_task, intent=intent, plan=plan)
 
-    def _parse_intent(self, task: Task, request_text: str) -> IntentDraft:
+    def _parse_intent(
+        self, task: Task, request_text: str, *, source: str = "text"
+    ) -> IntentDraft:
         try:
-            return self._intent_parser.parse(request_text)
+            draft = self._intent_parser.parse(request_text)
+            return IntentDraft(
+                type=draft.type,
+                goal=draft.goal,
+                parameters=draft.parameters,
+                confidence=draft.confidence,
+                source=source,
+            )
         except AmbiguousIntentError as exc:
             self._audit.record(
                 actor="planning_service",

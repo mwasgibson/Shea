@@ -8,8 +8,8 @@ from shea.app.memory import (
     InMemoryReceiptRepository,
 )
 from shea.app.supervisor import ExecutionSupervisor
-from shea.app.verify_engine import evidence_from_adapter, evaluate_verification
-from shea.app.verification import VerificationPolicy, policy_for_operation
+from shea.app.verification import policy_for_operation
+from shea.app.verify_engine import evaluate_verification, evidence_from_adapter
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.unit_of_work import UnitOfWork
