@@ -204,6 +204,8 @@ def test_execution_record_is_persisted(
         "receipt_id",
         "attempt_id",
         "evidence_id",
+        "app_verification_result",
+        "app_verification_explanation",
     }
 
 

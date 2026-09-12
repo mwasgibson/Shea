@@ -316,20 +316,6 @@ class ExecutionService:
             },
         )
 
-        response = ToolResponse(
-            success=self._map_app_outcome(
-                supervision.adapter_result.outcome
-            )
-            is ExecutionOutcome.SUCCESS,
-            data=supervision.adapter_result.evidence.get("data"),
-            error=supervision.adapter_result.error,
-            metadata={
-                "receipt_id": supervision.receipt.id,
-                "attempt_id": supervision.attempt.id,
-                "evidence_id": supervision.evidence_id,
-            },
-        )
-
         result = ExecutionOutcomeRecord(
             response=response,
             outcome=self._map_app_outcome(
@@ -453,4 +439,4 @@ class ExecutionService:
             if auth.arguments_hash != current_arguments_hash:
                 raise AuthorizationBindingMismatchError(
                     task.id, "arguments", auth.arguments_hash, current_arguments_hash
-                )              
+                )

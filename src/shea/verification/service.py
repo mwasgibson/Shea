@@ -118,27 +118,26 @@ class VerificationService:
                 metadata={"method": outcome.method, "tool": record.tool},
             )
             
-            app_result = None
-            if record.metadata:
-                app_result = record.metadata.get("app_verification_result")
-
-            if app_result is not None:
-                verified = app_result == "SUCCESS"
-                outcome_method = "app.verification"
-                explanation = str(
-                    record.metadata.get("app_verification_explanation")
-                    or f"app plane verification: {app_result}"
-                )
-                from shea.verification.verifier import VerificationOutcome  # if not imported
-
-                outcome = VerificationOutcome(
-                    verified=verified,
-                    method=outcome_method,
-                    explanation=explanation,
-                )
-            else:
-                verifier = self._verifiers.get(record.tool)
-                outcome = verifier(task, record)
+            # Deliberately does NOT let `record.metadata["app_verification_
+            # result"]` (a generic app-plane signal — see ExecutionService,
+            # which populates it from ExecutionSupervisor's own internal
+            # verification) override `outcome` above. `outcome` already
+            # came from the registered domain Verifier (or
+            # VerifierRegistry's sensible default when none is
+            # registered) — that IS the authoritative "did this tool call
+            # actually do what it claimed" answer per this class's own
+            # docstring ("EXECUTION SUCCESS != VERIFIED SUCCESS"). An
+            # earlier version of this method recomputed `outcome` from
+            # `app_result` here, which silently overrode a real
+            # registered verifier's FAILED result with a generic
+            # execution-succeeded signal — the persisted
+            # `VerificationRecord` correctly said "not verified" while
+            # the task transitioned to COMPLETED anyway, a direct
+            # contradiction between the recorded fact and its
+            # consequence. Confirmed by `test_verify_failure_advances_
+            # task_to_failed` and `test_custom_verifier_can_override_
+            # execution_report`, both of which register a verifier that
+            # always fails and assert the task ends up FAILED.
 
             if not outcome.verified:
                 event = "verification_failed"
