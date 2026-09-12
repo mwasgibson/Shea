@@ -13,6 +13,7 @@ from shea.app.interaction.service import InteractionService
 from shea.app.recovery import ReconciliationResult
 from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
+from shea.bootstrap_demo import register_demo_intent
 from shea.core.orchestrator import Orchestrator
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
@@ -97,6 +98,7 @@ def build_runtime(
     allow_unsafe_execution: bool = True,
     include_http_fetch: bool = False,
     model_provider: ModelProvider | None = None,
+    register_demo_intents: bool = True,
 ) -> SheaRuntime:
     """Build the V1 runtime and reconcile unfinished app-plane work.
 
@@ -135,7 +137,8 @@ def build_runtime(
     )
 
     registry = ToolRegistry()
-    workspace = Path(workspace) if not isinstance(workspace, Path) else workspace
+    workspace = Path(workspace).resolve() if not isinstance(workspace, Path) else workspace
+    workspace.mkdir(parents=True, exist_ok=True)
     matcher = DeterministicIntentMatcher()
     templates = PlanTemplateRegistry()
     network_policy = NetworkPolicy()
@@ -144,7 +147,7 @@ def build_runtime(
         allowed_roots=_filesystem_roots(configured_roots)
     )
     verifier_registry = VerifierRegistry()
-    if register_builtins:
+    if register_builtins and register_demo_intents:
         register_builtin_tools(
             registry,
             filesystem_policy=filesystem_policy,
@@ -152,6 +155,7 @@ def build_runtime(
             verifier_registry=verifier_registry,
             include_http_fetch=include_http_fetch,
         )
+        register_demo_intent(matcher, templates, workspace=workspace)
     tool_executor = ToolExecutor(
         registry,
         boundary=execution_boundary,

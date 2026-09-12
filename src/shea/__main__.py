@@ -4,6 +4,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 from shea.bootstrap import build_runtime
 
@@ -55,6 +56,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             sys.exit(1)
         print(f"plan_steps={len(result.planning.plan.steps)}")
         if result.run is not None:
+            for step_result in result.run.step_results:
+                data = step_result.response.data
+                if isinstance(data, dict):
+                    typed_data = cast(dict[str, object], data)
+                    content = typed_data.get("content")
+                    if isinstance(content, str):
+                        print(content)
             print(
                 f"completed_steps={result.run.completed_steps} "
                 f"stopped_early={result.run.stopped_early}"
