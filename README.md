@@ -350,6 +350,9 @@ src/shea/
 ├── provider/           # Routing + failover
 ├── audit/              # AuditRecorder + chain hashing
 └── adapters/           # concrete Clock / IdGenerator
+├── app/                # execution plane: supervisor, adapters, evidence, reconcile
+├── bootstrap.py        # composition root (wires agent + app plane)
+├── __main__.py         # thin CLI
 
 tests/
 ├── unit/
