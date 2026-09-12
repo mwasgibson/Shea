@@ -93,18 +93,42 @@ def resolve_and_check_url(
 def realpath_under_roots(
     path: str, policy: FilesystemPolicy, *, tool: str = "filesystem"
 ) -> Path:
-    """Resolve symlinks and require the real path stay under an allowed root.
+    """Resolve symlinks and require the real path stay under an allowed root."""
+    target = Path(path)
 
-    Closes the pure-policy gap: ``is_path_allowed`` is logical normalization
-    only. This touches the filesystem via ``Path.resolve()`` so a symlink
-    inside an allowed root that points outside is rejected.
-    """
-    if not is_path_allowed(path, policy):
+    # If the path is relative, resolve it against allowed roots or CWD
+    if not target.is_absolute():
+        candidate = None
+        # 1. Check if relative to CWD sits inside an allowed root (e.g. "workspace/note.txt")
+        resolved_cwd = target.resolve()
+        for root in policy.allowed_roots:
+            try:
+                resolved_cwd.relative_to(Path(root).resolve())
+                candidate = resolved_cwd
+                break
+            except ValueError:
+                pass
+
+        # 2. Check if relative to an allowed root directly
+        if candidate is None:
+            for root in policy.allowed_roots:
+                resolved_root = (Path(root) / target).resolve()
+                try:
+                    resolved_root.relative_to(Path(root).resolve())
+                    candidate = resolved_root
+                    break
+                except ValueError:
+                    pass
+
+        target = candidate if candidate is not None else target.resolve()
+
+    normalized_str = str(target)
+    if not is_path_allowed(normalized_str, policy):
         raise SecurityViolationError(
             tool, "filesystem", f"Path blocked by policy: {path!r}"
         )
 
-    real = Path(path).resolve()
+    real = target.resolve()
     for root in policy.allowed_roots:
         root_real = Path(root).resolve()
         try:
@@ -112,6 +136,7 @@ def realpath_under_roots(
             return real
         except ValueError:
             continue
+
     raise SecurityViolationError(
         tool,
         "filesystem",

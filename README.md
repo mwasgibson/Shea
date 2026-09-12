@@ -327,6 +327,43 @@ mypy                    # strict type checking
 ruff check .            # lint
 ```
 
+## Optional model planning
+
+If no deterministic template matches, Planning can call a model provider.
+
+```bash
+export SHEA_MODEL_API_KEY=sk-...
+# optional:
+export SHEA_MODEL_BASE_URL=https://api.openai.com/v1
+export SHEA_MODEL_NAME=gpt-4o-mini
+
+python -m shea run "organize my notes somehow"
+```
+
+---
+
+### Behavior
+
+| Case | Result |
+| ------ | -------- |
+| Template match (write a note) | No model call |
+| No template + no key | Plan fails (existing) |
+| No template + key | `generate` → JSON steps → validate tools → READY |
+| Bad JSON / HTTP error | `MalformedModelOutputError` / `ModelUnavailableError` → plan_failed |
+
+Model still **does not** authorize or execute — only proposes steps.
+
+---
+
+### Verify
+
+```bash
+pytest tests/unit/test_openai_compatible_provider.py -q
+# with key:
+export SHEA_MODEL_API_KEY=...
+python -m shea run "something with no demo template"
+```
+
 ## Layout
 
 ```text

@@ -20,6 +20,7 @@ from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
 from shea.execution.plan_runner import PlanRunner
 from shea.execution.service import ExecutionService
+from shea.model.factory import model_provider_from_env
 from shea.persistence.sqlite.app_attempt_repository import SqliteAppAttemptRepository
 from shea.persistence.sqlite.app_evidence_repository import SqliteAppEvidenceRepository
 from shea.persistence.sqlite.app_idempotency_repository import SqliteAppIdempotencyRepository
@@ -123,6 +124,7 @@ def build_runtime(
         id_generator=id_generator,
         unit_of_work=unit_of_work,
     )
+    provider = model_provider if model_provider is not None else model_provider_from_env()
 
     decision_repository = SqliteDecisionRepository(conn, unit_of_work=unit_of_work)
     risk_repository = SqliteRiskAssessmentRepository(conn, unit_of_work=unit_of_work)
@@ -247,7 +249,7 @@ def build_runtime(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
-        model_provider=model_provider,
+        model_provider=provider,
     )
     recovery_service = RecoveryService(
         orchestrator=orchestrator,
