@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import (
     RecoveryStrategy,
@@ -117,6 +118,7 @@ class RecoveryService:
         classifier: FailureClassifier | None = None,
         planner: RecoveryPlanner | None = None,
         retry_controller: RetryController | None = None,
+        execution_supervisor: ExecutionSupervisor | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._attempts = recovery_attempt_repository
@@ -128,6 +130,7 @@ class RecoveryService:
         self._classifier = classifier or FailureClassifier()
         self._planner = planner or RecoveryPlanner()
         self._retry = retry_controller or RetryController(RetryPolicy())
+        self._execution_supervisor = execution_supervisor
 
     def plan_recovery(self, task: Task) -> RecoveryDecision:
         if task.state is not TaskState.FAILED:
@@ -172,6 +175,7 @@ class RecoveryService:
         return decision
 
     def begin_recovery(self, task: Task) -> Task:
+        self.reconcile_app_plane()
         task = self._orchestrator.get_task(task.id)
         previous_attempts = self._attempts.list_by_task(task.id)
         attempt_number = len(previous_attempts) + 1
@@ -307,3 +311,29 @@ class RecoveryService:
         )
 
         return self._orchestrator.advance(task.id, event)
+    
+    def reconcile_app_plane(self) -> list[object]:
+        """Reconcile stuck app-plane receipts (no adapter re-entry)."""
+        if self._execution_supervisor is None:
+            return []
+        results = self._execution_supervisor.reconcile_stuck()
+        with self._uow:
+            for item in results:
+                if item.detail == "nothing_to_reconcile":
+                    continue
+                self._audit.record(
+                    actor="recovery_service",
+                    component="recovery.app_plane",
+                    event_type="recovery.app_receipt_reconciled",
+                    action="reconcile",
+                    result=item.outcome.value.lower(),
+                    task_id=None,
+                    metadata={
+                        "receipt_id": item.receipt.id,
+                        "detail": item.detail,
+                        "fence_token": (
+                            item.incident.fence_token if item.incident else None
+                        ),
+                    },
+                )
+        return list(results)

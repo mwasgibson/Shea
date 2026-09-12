@@ -117,6 +117,28 @@ class VerificationService:
                 task_id=task.id,
                 metadata={"method": outcome.method, "tool": record.tool},
             )
+            
+            app_result = None
+            if record.metadata:
+                app_result = record.metadata.get("app_verification_result")
+
+            if app_result is not None:
+                verified = app_result == "SUCCESS"
+                outcome_method = "app.verification"
+                explanation = str(
+                    record.metadata.get("app_verification_explanation")
+                    or f"app plane verification: {app_result}"
+                )
+                from shea.verification.verifier import VerificationOutcome  # if not imported
+
+                outcome = VerificationOutcome(
+                    verified=verified,
+                    method=outcome_method,
+                    explanation=explanation,
+                )
+            else:
+                verifier = self._verifiers.get(record.tool)
+                outcome = verifier(task, record)
 
             if not outcome.verified:
                 event = "verification_failed"

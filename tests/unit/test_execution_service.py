@@ -200,6 +200,11 @@ def test_execution_record_is_persisted(
     records = tool_execution_repository.list_by_task(running_task.id)
     assert len(records) == 1
     assert records[0].outcome == ExecutionOutcome.SUCCESS
+    assert set(records[0].metadata) == {
+        "receipt_id",
+        "attempt_id",
+        "evidence_id",
+    }
 
 
 def test_execution_service_transaction_rolls_back_on_audit_failure(

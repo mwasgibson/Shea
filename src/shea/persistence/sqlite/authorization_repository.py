@@ -71,7 +71,7 @@ class SqliteAuthorizationRepository:
                    plan_hash, step_hash, arguments_hash, expires_at, used_at, nonce
             FROM authorizations
             WHERE task_id = ?
-            ORDER BY id
+            ORDER BY rowid ASC
             """,
             (task_id,),
         ).fetchall()

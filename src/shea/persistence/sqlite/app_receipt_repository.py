@@ -86,6 +86,16 @@ class SqliteAppReceiptRepository:
             (ReceiptState.FINALIZED.value,),
         ).fetchall()
         return [_row_to_receipt(row) for row in rows]
+    
+    def list_non_finalized(self) -> list[ExecutionReceipt]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM app_receipts
+            WHERE state != 'FINALIZED'
+            ORDER BY rowid ASC
+            """
+        ).fetchall()
+        return [_row_to_receipt(row) for row in rows]
 
 
 def _row_to_receipt(row: sqlite3.Row) -> ExecutionReceipt:

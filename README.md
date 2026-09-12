@@ -261,6 +261,19 @@ perform symlink-aware real-path checks and independent post-write
 verification; descriptor-level race elimination remains an operating-system
 hardening boundary rather than a claim made by the pure policy layer.
 
+## Tool plane vs app plane (execution boundary)
+
+- **Tool plane** (`shea.tools`, builtin `filesystem.*` / `http.fetch`): product
+  tools used by plans and `ToolExecutor`. This is the supported agent path today.
+- **App plane** (`shea.app`, `ExecutionSupervisor`, receipts/attempts): wraps
+  every `ExecutionService.execute` via `ToolExecutorAdapter`, and also hosts
+  native adapters (`filesystem.local`, `process.local`) for EP-native contracts.
+
+**Rule:** do not add the same capability in both places. New side-effect work
+either extends a tool *or* an EP adapter, not both. Native EP filesystem/process
+are not on the default agent adapter list until plans route to them explicitly
+(strategy B migration).
+
 ## What's deliberately NOT here yet
 
 - Any real model/LLM API integration (`ScriptedModelProvider` is a

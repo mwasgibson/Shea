@@ -289,12 +289,17 @@ class ExecutionService:
 
         supervision = self._execution_supervisor.execute(contract)
         raw_evidence = supervision.adapter_result.evidence or {}
+        # ToolExecutorAdapter puts handler payload under "data"; native adapters may not
         evidence_data = raw_evidence.get("data", raw_evidence)
 
+        app_verification_result = (
+            supervision.verification.result.value
+            if supervision.verification is not None
+            else None
+        )
+
         response = ToolResponse(
-            success=self._map_app_outcome(
-                supervision.adapter_result.outcome
-            )
+            success=self._map_app_outcome(supervision.adapter_result.outcome)
             is ExecutionOutcome.SUCCESS,
             data=evidence_data,
             error=supervision.adapter_result.error,
@@ -302,6 +307,12 @@ class ExecutionService:
                 "receipt_id": supervision.receipt.id,
                 "attempt_id": supervision.attempt.id,
                 "evidence_id": supervision.evidence_id,
+                "app_verification_result": app_verification_result,
+                "app_verification_explanation": (
+                    supervision.verification.explanation
+                    if supervision.verification is not None
+                    else None
+                ),
             },
         )
 
@@ -338,6 +349,7 @@ class ExecutionService:
                     data=result.response.data,
                     error=result.response.error,
                     idempotency_key=idempotency_key,
+                    metadata=result.response.metadata,
                 )
             )
 

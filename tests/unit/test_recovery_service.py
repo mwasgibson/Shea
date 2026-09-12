@@ -27,8 +27,19 @@ from tests.unit.test_orchestrator import _RaisingAuditSink  # pyright: ignore[re
 def test_begin_recovery_on_non_failed_task_raises(
     recovery_service: RecoveryService, ready_task: Task
 ) -> None:
+    reconciled = False
+
+    def reconcile() -> list[object]:
+        nonlocal reconciled
+        reconciled = True
+        return []
+
+    recovery_service.reconcile_app_plane = reconcile  # type: ignore[method-assign]
+
     with pytest.raises(TaskNotFailedError):
         recovery_service.begin_recovery(ready_task)
+
+    assert reconciled is True
 
 
 def test_begin_recovery_persists_recovery_attempt(
