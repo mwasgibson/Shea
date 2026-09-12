@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from shea.app.recovery import ReconciliationResult
 from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import (
@@ -312,7 +313,7 @@ class RecoveryService:
 
         return self._orchestrator.advance(task.id, event)
     
-    def reconcile_app_plane(self) -> list[object]:
+    def reconcile_app_plane(self) -> list[ReconciliationResult]:
         """Reconcile stuck app-plane receipts (no adapter re-entry)."""
         if self._execution_supervisor is None:
             return []

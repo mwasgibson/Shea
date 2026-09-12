@@ -349,12 +349,20 @@ src/shea/
 ├── security/           # Gate, policies, runtime_checks, binding, SecurityService
 ├── provider/           # Routing + failover
 ├── audit/              # AuditRecorder + chain hashing
-└── adapters/           # concrete Clock / IdGenerator
 ├── app/                # execution plane: supervisor, adapters, evidence, reconcile
 ├── bootstrap.py        # composition root (wires agent + app plane)
 ├── __main__.py         # thin CLI
+└── adapters/            # concrete Clock / IdGenerator
 
 tests/
 ├── unit/
 └── property/
 ```
+
+The V1 composition root registers the built-in filesystem tools and wires
+`PlanningService` with deterministic intent matching and plan templates.
+Model-provider routing remains opt-in: pass a configured `ModelProvider` to
+`build_runtime()` when model fallback is available. The default execution
+boundary is intentionally unsafe for local development; production callers
+must provide a real boundary and configure `SHEA_FILESYSTEM_ROOTS` or pass
+`filesystem_roots` explicitly.

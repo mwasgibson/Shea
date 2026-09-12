@@ -20,9 +20,9 @@ class SqliteAuthorizationRepository:
         self._uow = unit_of_work
         
     def _parse_optional_datetime(self, value: str | None) -> datetime | None:
-       if value is None:
-        return None
-       return datetime.fromisoformat(value)    
+        if value is None:
+            return None
+        return datetime.fromisoformat(value)
 
     def save(self, authorization: Authorization) -> None:
         with self._uow:
