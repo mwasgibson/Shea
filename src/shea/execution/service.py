@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from shea.app.contracts import (
+    ExecutionContract,
+    IdentityKind,
+    IdentityRequirements,
+    RequestedTarget,
+)
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.contracts import ExecutionContract
+from shea.app.identities import IdentityAssurance
 from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
@@ -273,6 +280,21 @@ class ExecutionService:
             target=request.tool,
             arguments=dict(request.arguments),
             expires_at=authorization.expires_at,
+            requested_target=RequestedTarget(
+                kind=IdentityKind.OPAQUE,
+                value=request.tool,
+            ),
+            identity_requirements=IdentityRequirements(
+                assurance=IdentityAssurance.BASIC,
+                require_revalidation_before_invoke=False,
+                allowed_kinds=frozenset({
+                    IdentityKind.OPAQUE,
+                    IdentityKind.PATH,
+                    IdentityKind.URL,
+                    IdentityKind.HOST,
+                    IdentityKind.PROCESS,
+                }),
+            ),
             metadata={
                 "execution_backend": "tool_executor",
                 "tool": request.tool,

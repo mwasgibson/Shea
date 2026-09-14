@@ -37,7 +37,14 @@ class IdentityRequirements:
     assurance: IdentityAssurance = IdentityAssurance.BASIC
     require_revalidation_before_invoke: bool = True
     allowed_kinds: frozenset[IdentityKind] = frozenset(
-        {IdentityKind.PATH, IdentityKind.PROCESS, IdentityKind.HOST, IdentityKind.OPAQUE}
+        {
+            IdentityKind.PATH,
+            IdentityKind.PROCESS,
+            IdentityKind.HOST,
+            IdentityKind.URL,
+            IdentityKind.APPLICATION,
+            IdentityKind.OPAQUE,
+        }
     )
 
 

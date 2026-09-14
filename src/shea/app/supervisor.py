@@ -451,9 +451,16 @@ class ExecutionSupervisor:
                 raise ContractValidationError("contract expired")
 
     def _select_adapter(self, contract: ExecutionContract) -> Adapter:
+        preferred_name = contract.metadata.get("execution_backend")
+        if isinstance(preferred_name, str):
+            for adapter in self._adapters:
+                if adapter.name == preferred_name and adapter.supports(contract):
+                    return adapter
+
         for adapter in self._adapters:
             if adapter.supports(contract):
                 return adapter
         raise ContractValidationError(
             f"no adapter supports operation {contract.operation!r}"
+            + (f" (preferred: {preferred_name!r})" if preferred_name else "")
         )

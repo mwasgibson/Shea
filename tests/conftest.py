@@ -4,9 +4,12 @@ import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from shea.app.adapters.browser_stub import BrowserStubAdapter
+from shea.app.adapters.network_local import LocalNetworkAdapter
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.identity import IdentityResolver, IdentityRevalidator
 from shea.app.supervisor import ExecutionSupervisor
@@ -281,6 +284,7 @@ def execution_supervisor(
     unit_of_work: SqliteUnitOfWork,
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
+    network_policy: NetworkPolicy,
 ) -> ExecutionSupervisor:
     receipt_repository = SqliteAppReceiptRepository(
         conn,
@@ -307,10 +311,14 @@ def execution_supervisor(
         unit_of_work=unit_of_work,
     )
 
-    adapter = ToolExecutorAdapter(tool_executor)
+    adapters: list[Any] = [
+        LocalNetworkAdapter(policy=network_policy),
+        BrowserStubAdapter(),
+        ToolExecutorAdapter(tool_executor),  # agent tools still last-or-first by supports()
+    ]
 
     return ExecutionSupervisor(
-        adapters=[adapter],
+        adapters=adapters,
         receipt_repository=receipt_repository,
         attempt_repository=attempt_repository,
         evidence_repository=evidence_repository,

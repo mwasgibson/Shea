@@ -6,6 +6,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from shea.app.adapters.browser_stub import BrowserStubAdapter
+from shea.app.adapters.base import Adapter
+from shea.app.adapters.network_local import LocalNetworkAdapter
 from shea.adapters.system import SystemClock, UuidIdGenerator
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.identity import IdentityResolver, IdentityRevalidator
@@ -100,6 +103,7 @@ def build_runtime(
     include_http_fetch: bool = False,
     model_provider: ModelProvider | None = None,
     register_demo_intents: bool = True,
+    include_ep_network: bool = False,
 ) -> SheaRuntime:
     """Build the V1 runtime and reconcile unfinished app-plane work.
 
@@ -163,6 +167,13 @@ def build_runtime(
         boundary=execution_boundary,
         allow_unsafe_execution=allow_unsafe_execution,
     )
+    adapters: list[Adapter] = [ToolExecutorAdapter(tool_executor)]
+    if include_ep_network:
+        adapters = [
+            LocalNetworkAdapter(policy=network_policy),
+            BrowserStubAdapter(),
+            ToolExecutorAdapter(tool_executor),
+        ]
 
     receipt_repository = SqliteAppReceiptRepository(conn, unit_of_work=unit_of_work)
     attempt_repository = SqliteAppAttemptRepository(conn, unit_of_work=unit_of_work)
@@ -177,7 +188,7 @@ def build_runtime(
         conn, unit_of_work=unit_of_work
     )
     supervisor = ExecutionSupervisor(
-        adapters=[ToolExecutorAdapter(tool_executor)],
+        adapters=adapters,
         receipt_repository=receipt_repository,
         attempt_repository=attempt_repository,
         evidence_repository=evidence_repository,

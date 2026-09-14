@@ -73,6 +73,11 @@ DEFAULT_POLICIES: dict[str, VerificationPolicy] = {
         postconditions=(),
         required_evidence_kinds=frozenset(),
     ),
+    "network.request": VerificationPolicy(
+        policy_id="net.request.v1",
+        postconditions=("response_received",),
+        required_evidence_kinds=frozenset({"adapter.network"}),
+    ),
 }
 
 
