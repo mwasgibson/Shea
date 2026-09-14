@@ -469,3 +469,28 @@
 - [ ] Full testing pyramid — unit + property exist; no integration/E2E/
       adversarial security suite yet (SSRF via IPv6, Unicode path tricks,
       sandbox escape, replay attacks, etc.)
+- [x] **`build_runtime()` / `python -m shea` CLI now exist**
+      (`src/shea/bootstrap.py`, `src/shea/__main__.py`) — the first real
+      process entry point, wiring every service constructed across
+      Phases 1-9 (plus `todo_interaction.md`'s `shea.app` execution
+      plane) into one `SheaRuntime`, and calling
+      `reconcile_app_plane()` on every startup so a crash-stuck receipt
+      from a previous run gets finalized (never re-invoked) before new
+      work begins. `src/shea/bootstrap_demo.py` (gitignored, provided
+      locally, not part of the repo) supplies the one demo intent
+      `build_runtime()`'s own tests exercise end to end.
+- [x] **Two bugs found and fixed while verifying the `shea.app`
+      integration** (full detail in `todo_interaction.md`'s EP Phase 5 —
+      cross-referenced here because both files are core-track, not
+      execution-plane code): `ExecutionService.execute()` had a
+      duplicated `ToolResponse` construction where the second silently
+      overwrote the first, dropping verification metadata; and
+      `VerificationService.verify()` let a generic app-plane success
+      signal override an actually-registered domain `Verifier`'s FAILED
+      decision — directly contradicting "EXECUTION SUCCESS != VERIFIED
+      SUCCESS," and worse, leaving the persisted `VerificationRecord`
+      disagreeing with the task's actual state transition. Both fixed;
+      confirmed via `test_verify_failure_advances_task_to_failed` and
+      `test_custom_verifier_can_override_execution_report`, which were
+      failing before the fix. Full suite: 379/379 pytest, mypy --strict
+      clean (144 files), ruff clean.

@@ -8,12 +8,27 @@ the controlled boundary between authorized work and platform adapters
 invocation, identity resolution/revalidation, and scope enforcement as
 first-class concepts distinct from the Task state machine.
 
-**Current status: supervised execution is wired into the main tool path.**
-`ExecutionService` invokes `ExecutionSupervisor` for authorized tool calls,
-and `InteractionService` connects planning and `PlanRunner` without bypassing
-the safety pipeline. Native application/browser adapters and a bundled
-transport remain out of scope; callers provide the transport and use the
-public interaction service.
+**Current status: wired into the main tool-execution path.**
+`ExecutionService.execute()` still calls `SecurityService.enforce()`,
+the idempotency-key check, and `_verify_authorization_binding()` — all
+of Phase 6/8's hardening — *before* building an `ExecutionContract` and
+calling `ExecutionSupervisor.execute()`. `ExecutionSupervisor` routes
+that contract through `ToolExecutorAdapter`, which calls the same
+`ToolExecutor.execute()` as before. So this is a wrapping layer added
+underneath the existing hardened path, not a second path around it —
+worth stating explicitly since a naive first read (a new
+`ExecutionSupervisor.execute()` that runs a tool) could easily look like
+exactly that kind of bypass, and it was the first thing checked here.
+`InteractionService` (raw text → plan → `PlanRunner`) does not go
+through `shea.app` at all — it's built on `PlanningService`/`PlanRunner`,
+which already goes through `DecisionService`/`ExecutionService` per
+step. A CLI (`python -m shea`) and `build_runtime()` bootstrap now exist
+as the first real entry point, calling `runtime.reconcile_app_plane()`
+on startup to finalize any receipts left stuck by a previous crash.
+Native application/browser adapters remain out of scope; only one
+adapter (`ToolExecutorAdapter`) is actually registered in
+`build_runtime()` — `FilesystemLocalAdapter` and `ApplicationStubAdapter`
+exist as code but aren't in the runtime's adapter list.
 
 ## EP Phase 1: Contracts, Receipts, Attempts, Supervisor (foundation)
 
@@ -195,49 +210,92 @@ public interaction service.
       supervisor for the `_adapter_context`/metadata it attaches to a
       contract before invoke).
 
-## EP Phase 5: Not yet done / open questions
+## EP Phase 5: Verified against the actual current code (not just commit titles)
 
-- [x] **Wire `ExecutionSupervisor` into the main pipeline.** Nothing in
-      `shea.execution`, `shea.decision`, or `shea.tools` calls it yet.
-      Until this happens, `shea.app` is a parallel, unused execution path
-      — real, tested, but inert. Deciding how it relates to
-      `ExecutionService`/`ToolExecutor` (replaces them? sits underneath
-      them for a specific class of operation? handles only
-      application/process/filesystem/browser targets while
-      `ToolExecutor` keeps handling declared in-process tools?) is an
-      open design question, not just a wiring task.
-- [x] Confirm whether `SqliteAppReceiptRepository`/
-      `SqliteAppAttemptRepository` share a `UnitOfWork` the way
-      `SqliteTaskRepository`/`SqliteAuditSink` do. If they don't, a
-      receipt persisted without its paired attempt (or vice versa) on a
-      crash is exactly the kind of gap the Phase 8 atomicity sweep closed
-      elsewhere in the codebase — this subsystem didn't exist yet when
-      that sweep happened, so it needs its own pass.
-- [x] No adapters yet for application control, filesystem, browser, or
-      network under this plane — only `process.local` and the `stub`
-      test double. `shea.tools.builtin`'s `filesystem`/`http.fetch` tools
-      (Phase 9, in `todo_core.md`) are a separate, already-wired path;
-      whether they get reimplemented as `shea.app` adapters or stay where
-      they are is part of the open wiring question above.
-- [x] No macOS/Linux/Windows-specific adapters — `process_local.py` is
-      platform-neutral (plain `subprocess`), not the OS-native
-      Launch-Services/D-Bus/Job-Object adapters the execution-plane
-      research documents describe in depth.
-- [x] Recovery/reconciliation for `AppOutcome.UNKNOWN` isn't built —
-      `LocalProcessAdapter` correctly *reports* UNKNOWN on a timeout, but
-      nothing yet reconciles an UNKNOWN attempt against actual external
-      state before deciding whether a retry is safe (the
-      `shea.recovery`/`IdempotencyKeyGenerator` machinery in
-      `todo_core.md` covers this for `shea.tools`-executed tools; it
-      doesn't currently touch `shea.app` attempts).
-- [x] `URL`/`APPLICATION` identity kinds have no test coverage exercising
-      a contract that actually requests them (see the note under EP
-      Phase 2) — confirm the default exclusion is deliberate before
-      treating it as documented behavior rather than an untested gap.
+- [x] **`ExecutionSupervisor` wired into the main pipeline** — confirmed
+      true. See the header above for the exact call chain and why it's
+      a wrap, not a bypass.
+- [x] **`SqliteAppReceiptRepository`/`SqliteAppAttemptRepository` share
+      `UnitOfWork` with the rest of the system** — confirmed true.
+      `build_runtime()` constructs one `SqliteUnitOfWork` and passes the
+      same instance to every repository, `Orchestrator`, `SecurityService`,
+      and `ExecutionSupervisor`. `ExecutionSupervisor` itself wraps its
+      receipt/attempt/evidence writes in `with self._uow:` at 5 separate
+      points in `supervisor.py` — genuinely atomic with everything else
+      sharing that instance, not just plumbed through and unused.
+- [x] **Recovery/reconciliation for `AppOutcome.UNKNOWN` is now built**
+      — `shea/app/recovery.py`'s `classify_stuck_attempt()` (pure) +
+      `ExecutionSupervisor.reconcile_stuck()`/`reconcile_receipt()`
+      (called from `RecoveryService.reconcile_app_plane()`, called from
+      `build_runtime()` on every startup). Correctly distinguishes: an
+      attempt that was `INVOKED` but never finalized reconciles to
+      **UNKNOWN** (the side effect may have happened) and gets
+      `RecoveryStatus.QUARANTINED` — a human has to look at it, the
+      system doesn't get to decide on its own that it's fine. An attempt
+      that was never even `INVOKED` reconciles to FAILURE (safe — nothing
+      happened) and gets `RecoveryStatus.RESOLVED`. No adapter is
+      re-invoked during reconciliation — this is "finalize honestly,"
+      not "auto-retry."
+- [~] **Adapters beyond `process.local`/`stub`**: partially true, but not
+      the way the checkbox implied. `FilesystemLocalAdapter` (416 lines)
+      and `ApplicationStubAdapter` now exist as code — but **`build_runtime()`
+      only registers `ToolExecutorAdapter`**. `ApplicationStubAdapter` is
+      honest about this itself (always returns FAILURE with "application
+      control not implemented in V1"), which is the right way to build a
+      placeholder. `FilesystemLocalAdapter` hasn't been read closely yet
+      this pass — it's real code, just not reviewed to the same depth as
+      the other fixes below, and not wired into the runtime either way.
+- [x] **Still no macOS/Linux/Windows-specific adapters** — `process_local.py`
+      remains plain `subprocess`, unchanged.
+- [ ] **`URL`/`APPLICATION` identity kinds still have no test coverage**
+      exercising a contract that actually requests them — not re-checked
+      this pass, left as previously stated.
+
+**Two real bugs found and fixed in this integration:**
+
+- **`ExecutionService.execute()` had a duplicated `ToolResponse`
+  construction.** Two near-identical blocks built `response = ToolResponse(...)`
+  back to back; the second silently overwrote the first, discarding
+  `app_verification_result`/`app_verification_explanation` from the
+  persisted metadata and the `raw_evidence.get("data", raw_evidence)`
+  fallback (which matters for any adapter that doesn't nest its payload
+  under an explicit `"data"` key). Fixed by deleting the second,
+  regressed block. `test_execution_record_is_persisted` had been updated
+  to assert the *regressed* 3-key metadata shape rather than catching the
+  regression — updated it to the correct 5-key shape instead of reverting
+  the fix to match the test.
+- **`VerificationService.verify()` let a generic app-plane signal
+  override an actually-registered domain `Verifier`'s decision.** Added
+  logic checked `record.metadata["app_verification_result"]` and, if
+  present, discarded the `outcome` already computed from the registered
+  `Verifier` (or `VerifierRegistry`'s sensible default), replacing it with
+  a verdict based only on whether the underlying execution reported
+  SUCCESS. This directly contradicts the class's own docstring
+  ("EXECUTION SUCCESS != VERIFIED SUCCESS") and the exact scenario
+  `default_verifier`'s docstring already explains is why per-tool
+  Verifiers exist. Worse: the persisted `VerificationRecord` (built from
+  the *correct* outcome, before the override) said `verified=False` while
+  the task transitioned to COMPLETED anyway — the audit record and the
+  actual consequence disagreed. Caught because it broke
+  `test_verify_failure_advances_task_to_failed` and
+  `test_custom_verifier_can_override_execution_report` — both of which
+  register a verifier that always fails and assert the task ends up
+  FAILED, and both were failing before this fix. Fixed by removing the
+  override entirely; `VerificationService` now always defers to the
+  single `outcome` computed once from the registered verifier.
+- Both confirmed via full suite: 379/379 pytest, mypy --strict clean
+  (144 files), ruff clean.
+
+**Recurring cleanup, not yet permanent**: `src/shea/app/ports.py` (the
+stale, tab-indented, never-imported duplicate of `ports/__init__.py`
+documented in EP Phase 4 above) has now reappeared and been deleted
+twice in the same number of sync passes — whatever local branch these
+commits are coming from still has the old file. Worth deleting it at the
+source rather than relying on this file to keep re-flagging it.
 
 ## Verification
 
-- [x] Full suite verified after this session's fix + cleanup: pytest,
-      mypy --strict, and ruff all clean (see `todo_core.md`'s Phase 9
-      entry for the exact count as of the same sync point — this track's
-      files are included in that same run, not verified separately).
+- [x] Full suite verified after this round's two fixes (duplicate
+      `ToolResponse` block, verification-override bug) and the repeated
+      `ports.py` cleanup: 379/379 pytest, mypy --strict clean
+      (144 source files), ruff clean.
