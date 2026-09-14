@@ -93,6 +93,16 @@ DEFAULT_POLICIES: dict[str, VerificationPolicy] = {
         postconditions=("inspect_platform",),
         required_evidence_kinds=frozenset({"adapter.application"}),
     ),
+    "browser.navigate": VerificationPolicy(
+        policy_id="browser.navigate.v1",
+        postconditions=("page_fetched",),
+        required_evidence_kinds=frozenset({"adapter.browser"}),
+    ),
+    "browser.read": VerificationPolicy(
+        policy_id="browser.read.v1",
+        postconditions=("page_fetched",),
+        required_evidence_kinds=frozenset({"adapter.browser"}),
+    ),
 }
 
 

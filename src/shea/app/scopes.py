@@ -85,5 +85,7 @@ class ScopeEnforcementReport:
     limits: dict[str, EnforcementStatus]
     isolation: dict[str, EnforcementStatus]
     filesystem: dict[str, EnforcementStatus]
-    acceptable: bool
+    network: dict[str, EnforcementStatus] = field(default_factory=dict[str, EnforcementStatus])
+    application: dict[str, EnforcementStatus] = field(default_factory=dict[str, EnforcementStatus])
+    acceptable: bool = True
     detail: str = ""

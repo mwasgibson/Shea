@@ -6,14 +6,14 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from shea.adapters.system import SystemClock, UuidIdGenerator
 from shea.app.adapters.application_linux import LinuxApplicationAdapter
 from shea.app.adapters.application_macos import MacOSApplicationAdapter
 from shea.app.adapters.application_stub import ApplicationStubAdapter
 from shea.app.adapters.application_windows import WindowsApplicationAdapter
-from shea.app.adapters.browser_stub import BrowserStubAdapter
 from shea.app.adapters.base import Adapter
+from shea.app.adapters.browser_local import LocalBrowserAdapter
 from shea.app.adapters.network_local import LocalNetworkAdapter
-from shea.adapters.system import SystemClock, UuidIdGenerator
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.identity import IdentityResolver, IdentityRevalidator
 from shea.app.interaction.service import InteractionService
@@ -72,7 +72,6 @@ class SheaRuntime:
 
     conn: sqlite3.Connection
     interaction_service: InteractionService
-    recovery_service: RecoveryService
     unit_of_work: SqliteUnitOfWork
     orchestrator: Orchestrator
     tool_registry: ToolRegistry
@@ -191,7 +190,7 @@ def build_runtime(
         adapters.extend(
             [
                 LocalNetworkAdapter(policy=network_policy),
-                BrowserStubAdapter(),
+                LocalBrowserAdapter(),
             ]
         )
     adapters.append(ToolExecutorAdapter(tool_executor, permit_authority=permit_authority))

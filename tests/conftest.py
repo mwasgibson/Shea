@@ -11,7 +11,7 @@ import pytest
 from shea.app.adapters.application_linux import LinuxApplicationAdapter
 from shea.app.adapters.application_macos import MacOSApplicationAdapter
 from shea.app.adapters.application_stub import ApplicationStubAdapter
-from shea.app.adapters.browser_stub import BrowserStubAdapter
+from shea.app.adapters.browser_local import LocalBrowserAdapter
 from shea.app.adapters.network_local import LocalNetworkAdapter
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.identity import IdentityResolver, IdentityRevalidator
@@ -23,6 +23,7 @@ from shea.core.orchestrator import Orchestrator
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
+from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.service import ExecutionService
 from shea.model.scripted import ScriptedModelProvider
 from shea.persistence.sqlite.app_attempt_repository import SqliteAppAttemptRepository
@@ -269,8 +270,15 @@ def tool_registry() -> ToolRegistry:
 
 
 @pytest.fixture
-def tool_executor(tool_registry: ToolRegistry) -> ToolExecutor:
-    return ToolExecutor(tool_registry, allow_unsafe_execution=True)
+def tool_executor(
+    tool_registry: ToolRegistry,
+    permit_authority: ExecutionPermitAuthority
+) -> ToolExecutor:
+    return ToolExecutor(
+        tool_registry, 
+        allow_unsafe_execution=True, 
+        permit_authority=permit_authority
+    )
 
 
 @pytest.fixture
@@ -319,7 +327,7 @@ def execution_supervisor(
         MacOSApplicationAdapter(),
         ApplicationStubAdapter(),
         LocalNetworkAdapter(policy=network_policy),
-        BrowserStubAdapter(),
+        LocalBrowserAdapter(),
         ToolExecutorAdapter(tool_executor),  # agent tools still last-or-first by supports()
     ]
 
@@ -340,6 +348,7 @@ def execution_supervisor(
 
 @pytest.fixture
 def execution_service(
+    permit_authority: ExecutionPermitAuthority,
     tool_executor: ToolExecutor,
     execution_supervisor: ExecutionSupervisor,
     orchestrator: Orchestrator,
@@ -354,6 +363,7 @@ def execution_service(
     clock: Clock,
 ) -> ExecutionService:
     return ExecutionService(
+        permit_authority=permit_authority,
         tool_executor=tool_executor,
         execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
