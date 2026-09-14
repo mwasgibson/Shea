@@ -71,12 +71,27 @@ DEFAULT_POLICIES: dict[str, VerificationPolicy] = {
     "default": VerificationPolicy(
         policy_id="default.v1",
         postconditions=(),
-        required_evidence_kinds=frozenset(),
+        required_evidence_kinds=frozenset({"adapter.generic"}),
     ),
     "network.request": VerificationPolicy(
         policy_id="net.request.v1",
         postconditions=("response_received",),
         required_evidence_kinds=frozenset({"adapter.network"}),
+    ),
+    "application.launch": VerificationPolicy(
+        policy_id="app.launch.v1",
+        postconditions=("open_accepted",),
+        required_evidence_kinds=frozenset({"adapter.application"}),
+    ),
+    "application.activate": VerificationPolicy(
+        policy_id="app.activate.v1",
+        postconditions=("open_accepted",),
+        required_evidence_kinds=frozenset({"adapter.application"}),
+    ),
+    "application.inspect": VerificationPolicy(
+        policy_id="app.inspect.v1",
+        postconditions=("inspect_platform",),
+        required_evidence_kinds=frozenset({"adapter.application"}),
     ),
 }
 

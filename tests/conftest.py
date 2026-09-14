@@ -8,6 +8,9 @@ from typing import Any
 
 import pytest
 
+from shea.app.adapters.application_linux import LinuxApplicationAdapter
+from shea.app.adapters.application_macos import MacOSApplicationAdapter
+from shea.app.adapters.application_stub import ApplicationStubAdapter
 from shea.app.adapters.browser_stub import BrowserStubAdapter
 from shea.app.adapters.network_local import LocalNetworkAdapter
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
@@ -312,6 +315,9 @@ def execution_supervisor(
     )
 
     adapters: list[Any] = [
+        LinuxApplicationAdapter(),
+        MacOSApplicationAdapter(),
+        ApplicationStubAdapter(),
         LocalNetworkAdapter(policy=network_policy),
         BrowserStubAdapter(),
         ToolExecutorAdapter(tool_executor),  # agent tools still last-or-first by supports()

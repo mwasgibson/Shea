@@ -6,6 +6,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from shea.app.adapters.application_linux import LinuxApplicationAdapter
+from shea.app.adapters.application_macos import MacOSApplicationAdapter
+from shea.app.adapters.application_stub import ApplicationStubAdapter
+from shea.app.adapters.application_windows import WindowsApplicationAdapter
 from shea.app.adapters.browser_stub import BrowserStubAdapter
 from shea.app.adapters.base import Adapter
 from shea.app.adapters.network_local import LocalNetworkAdapter
@@ -104,6 +108,7 @@ def build_runtime(
     model_provider: ModelProvider | None = None,
     register_demo_intents: bool = True,
     include_ep_network: bool = False,
+    include_ep_application: bool = False,
 ) -> SheaRuntime:
     """Build the V1 runtime and reconcile unfinished app-plane work.
 
@@ -167,13 +172,24 @@ def build_runtime(
         boundary=execution_boundary,
         allow_unsafe_execution=allow_unsafe_execution,
     )
-    adapters: list[Adapter] = [ToolExecutorAdapter(tool_executor)]
+    adapters: list[Adapter] = []
+    if include_ep_application:
+        adapters.extend(
+            [
+                LinuxApplicationAdapter(),
+                MacOSApplicationAdapter(),
+                WindowsApplicationAdapter(),
+                ApplicationStubAdapter(),
+            ]
+        )
     if include_ep_network:
-        adapters = [
-            LocalNetworkAdapter(policy=network_policy),
-            BrowserStubAdapter(),
-            ToolExecutorAdapter(tool_executor),
-        ]
+        adapters.extend(
+            [
+                LocalNetworkAdapter(policy=network_policy),
+                BrowserStubAdapter(),
+            ]
+        )
+    adapters.append(ToolExecutorAdapter(tool_executor))
 
     receipt_repository = SqliteAppReceiptRepository(conn, unit_of_work=unit_of_work)
     attempt_repository = SqliteAppAttemptRepository(conn, unit_of_work=unit_of_work)

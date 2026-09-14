@@ -27,7 +27,8 @@ def evidence_from_adapter(
 ) -> EvidenceRecord:
     kind = "adapter.filesystem" if operation.startswith("filesystem.") else (
         "adapter.process" if operation.startswith("process.") else "adapter.network"
-        if operation.startswith("network.") else "adapter.generic"
+        if operation.startswith("network.") else "adapter.application" if 
+        operation.startswith("application.") else "adapter.generic"
     )
     payload: dict[str,Any] = {
         "outcome": result.outcome.value,
