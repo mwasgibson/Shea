@@ -25,6 +25,7 @@ from shea.core.orchestrator import Orchestrator
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
+from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import PlanRunner
 from shea.execution.service import ExecutionService
 from shea.model.factory import model_provider_from_env
@@ -70,13 +71,14 @@ class SheaRuntime:
     """Process-wide wired graph. Construct once at startup."""
 
     conn: sqlite3.Connection
+    interaction_service: InteractionService
+    recovery_service: RecoveryService
     unit_of_work: SqliteUnitOfWork
     orchestrator: Orchestrator
     tool_registry: ToolRegistry
     execution_supervisor: ExecutionSupervisor
     execution_service: ExecutionService
     planning_service: PlanningService
-    interaction_service: InteractionService
     plan_runner: PlanRunner
     recovery_service: RecoveryService
     decision_service: DecisionService
@@ -167,10 +169,13 @@ def build_runtime(
             include_http_fetch=include_http_fetch,
         )
         register_demo_intent(matcher, templates, workspace=workspace)
+    permit_authority = ExecutionPermitAuthority()
     tool_executor = ToolExecutor(
         registry,
         boundary=execution_boundary,
         allow_unsafe_execution=allow_unsafe_execution,
+        permit_authority=permit_authority,
+        require_permit=True,
     )
     adapters: list[Adapter] = []
     if include_ep_application:
@@ -189,7 +194,7 @@ def build_runtime(
                 BrowserStubAdapter(),
             ]
         )
-    adapters.append(ToolExecutorAdapter(tool_executor))
+    adapters.append(ToolExecutorAdapter(tool_executor, permit_authority=permit_authority))
 
     receipt_repository = SqliteAppReceiptRepository(conn, unit_of_work=unit_of_work)
     attempt_repository = SqliteAppAttemptRepository(conn, unit_of_work=unit_of_work)
@@ -242,6 +247,7 @@ def build_runtime(
         unit_of_work=unit_of_work,
     )
     execution_service = ExecutionService(
+        permit_authority=permit_authority,
         tool_executor=tool_executor,
         execution_supervisor=supervisor,
         orchestrator=orchestrator,

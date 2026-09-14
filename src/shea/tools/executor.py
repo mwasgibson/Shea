@@ -6,6 +6,7 @@ from typing import Any
 
 from shea.contracts.enums import ExecutionOutcome
 from shea.contracts.models import ToolRequest, ToolResponse
+from shea.execution.permit import ExecutionPermit, ExecutionPermitAuthority
 from shea.ports.execution_boundary import ExecutionBoundary, ExecutionScope
 
 from .boundary import UnsafeExecutionBoundary
@@ -91,6 +92,8 @@ class ToolExecutor:
         boundary: ExecutionBoundary | None = None,
         *,
         allow_unsafe_execution: bool = False,
+        permit_authority: ExecutionPermitAuthority | None = None,
+        require_permit: bool = False
     ) -> None:
         self._registry = registry
         if boundary is None:
@@ -99,6 +102,33 @@ class ToolExecutor:
             boundary = UnsafeExecutionBoundary()
         self._boundary: ExecutionBoundary = boundary
         self._schema_cache: dict[str, ToolSchema | None] = {}
+        self._permit_authority = permit_authority
+        self._require_permit: bool = require_permit
+
+    def mint_permit(
+        self,
+        *,
+        tool: str,
+        action: str,
+        arguments: Mapping[str, Any],
+        capabilities: frozenset[str],
+    ) -> ExecutionPermit:
+        authority = self._permit_authority
+        if authority is None:
+            authority = ExecutionPermitAuthority()
+            self._permit_authority = authority
+        return authority.mint(
+            tool=tool,
+            action=action,
+            arguments=arguments,
+            capabilities=capabilities,
+        )
+
+    @property
+    def permit_authority(self) -> ExecutionPermitAuthority:
+        if self._permit_authority is None:
+            self._permit_authority = ExecutionPermitAuthority()
+        return self._permit_authority
 
     def execute(
         self,
@@ -107,6 +137,7 @@ class ToolExecutor:
         scope: ExecutionScope | None = None,
     ) -> ExecutionResult:
         declaration = self._registry.get_declaration(request.tool)
+        permit_data = request.context.get("_execution_permit")
 
         missing = declaration.capabilities - authorized_capabilities
         if missing:
@@ -114,6 +145,34 @@ class ToolExecutor:
             # there is no code path here that reaches the handler once
             # this check fails.
             raise CapabilityNotAuthorizedError(request.tool, missing)
+
+        permit: ExecutionPermit | None = None
+        if permit_data is not None:
+            permit = ExecutionPermit(
+                token=str(permit_data.get("token", "")),
+                tool=str(permit_data.get("tool", "")),
+                action=str(permit_data.get("action", "")),
+                arguments_digest=str(permit_data.get("arguments_digest", "")),
+                capabilities_digest=str(permit_data.get("capabilities_digest", "")),
+            )
+
+        if self._require_permit:
+            if self._permit_authority is None:
+                raise CapabilityNotAuthorizedError(
+                    request.tool,
+                    frozenset({"<execution_permit_required>"}),
+                )
+            if permit is None or not self._permit_authority.verify(
+                permit,
+                tool=request.tool,
+                action=request.action,
+                arguments=request.arguments,
+                capabilities=authorized_capabilities,
+            ):
+                raise CapabilityNotAuthorizedError(
+                    request.tool,
+                    frozenset({"<execution_permit_invalid>"}),
+                )
 
         validated_request = self._validate_arguments(request, declaration)
         handler = self._registry.get_handler(request.tool)

@@ -1,3 +1,4 @@
+from .permit import ExecutionPermit, ExecutionPermitAuthority
 from .plan_runner import PlanRunner, PlanRunResult
 from .service import (
     DuplicateExecutionSuppressedError,
@@ -8,6 +9,8 @@ from .service import (
 )
 
 __all__ = [
+    "ExecutionPermit",
+    "ExecutionPermitAuthority",
     "PlanRunResult",
     "PlanRunner",
     "DuplicateExecutionSuppressedError",

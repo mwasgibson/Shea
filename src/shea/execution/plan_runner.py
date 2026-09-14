@@ -130,7 +130,7 @@ class PlanRunner:
                 request = ToolRequest(
                     request_id=current.request_id,
                     tool=step.tool,
-                    action=step.description or step.tool,
+                    action = getattr(step, "action", None) or step.description or step.tool,
                     arguments=dict(step.arguments),
                 )
                 exec_result = self._execution.execute(current, request)

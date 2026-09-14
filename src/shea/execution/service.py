@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.contracts import (
     ExecutionContract,
     IdentityKind,
     IdentityRequirements,
     RequestedTarget,
 )
-from shea.app.adapters.tool_executor import ToolExecutorAdapter
-from shea.app.contracts import ExecutionContract
 from shea.app.identities import IdentityAssurance
 from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
+from shea.execution.permit import ExecutionPermitAuthority
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import (
@@ -153,6 +153,7 @@ class ExecutionService:
     def __init__(
         self,
         *,
+        permit_authority: ExecutionPermitAuthority,
         tool_executor: ToolExecutor,
         execution_supervisor: ExecutionSupervisor,
         orchestrator: Orchestrator,
@@ -166,6 +167,7 @@ class ExecutionService:
         unit_of_work: UnitOfWork,
         clock: Clock,
     ) -> None:
+        self._permits = permit_authority
         self._tool_executor = tool_executor
         self._execution_supervisor = execution_supervisor
         self._orchestrator = orchestrator
@@ -267,6 +269,12 @@ class ExecutionService:
             raise
 
         authorization = self._authorizations.list_by_task(task.id)[-1]
+        permit = self._tool_executor.mint_permit(
+            tool=request.tool,
+            action=request.action,
+            arguments=request.arguments,
+            capabilities=authorized_capabilities,
+        )
 
         contract = ExecutionContract(
             contract_id=self._ids.new_id(),
@@ -305,6 +313,13 @@ class ExecutionService:
                 "_authorized_capabilities": tuple(
                     sorted(authorized_capabilities)
                 ),
+                "_execution_permit": {
+                    "token": permit.token,
+                    "tool": permit.tool,
+                    "action": permit.action,
+                    "arguments_digest": permit.arguments_digest,
+                    "capabilities_digest": permit.capabilities_digest,
+                },
                 "idempotency_key": idempotency_key,
             },
         )
@@ -337,6 +352,25 @@ class ExecutionService:
                 ),
             },
         )
+
+        scan = self._security.scan_output(task, request.tool, evidence_data)
+        if scan.flagged:
+            self._audit.record(
+                actor="execution_service",
+                component="execution.tool",
+                event_type="execution.output_flagged",
+                action=request.action,
+                result="flagged",
+                request_id=task.request_id,
+                task_id=task.id,
+                metadata={"reason": getattr(scan, "reason", None)},
+            )
+            response = ToolResponse(
+                success=False,
+                data=evidence_data,
+                error=f"output scan flagged: {getattr(scan, 'reason', 'injection')}",
+                metadata=response.metadata,
+            )
 
         result = ExecutionOutcomeRecord(
             response=response,
