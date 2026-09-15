@@ -1,12 +1,11 @@
-"""SHEA — Phase 1 core runtime.
+"""SHEA — user-sovereign modular AI agent runtime.
 
-This package contains only the foundation layer described in the Phase 1
-milestone: typed contracts, the task state machine, SQLite persistence,
-layered configuration, and the thin orchestrator that wires them together.
+Agent plane: plan → decide → authorize → execute (permitted) → verify.
+App / execution plane: contracts, receipts, adapters (FS, process, network,
+browser, OS applications), evidence, reconcile.
 
-No model, tool, policy, or risk logic lives here yet — those subsystems
-plug into the ports defined in `shea.ports` in later phases, without
-requiring changes to this layer.
+Public product entry: ``shea.bootstrap.build_runtime`` →
+``SheaRuntime.interaction_service``.
 """
 
 __version__ = "0.1.0"

@@ -299,3 +299,26 @@ source rather than relying on this file to keep re-flagging it.
       `ToolResponse` block, verification-override bug) and the repeated
       `ports.py` cleanup: 379/379 pytest, mypy --strict clean
       (144 source files), ruff clean.
+
+## Post–Phase 10 / EP depth (repo catch-up)
+
+### Done
+
+- [x] `ExecutionPermit` + sealed tool path (`require_permit` on product bootstrap)
+- [x] `build_runtime` flags: `include_ep_process` / `include_ep_application` / `include_ep_network`
+- [x] `process.local` isolation depth (no shell, allowlist, session/rlimit best-effort)
+- [x] `network.local` + redirects re-checked under policy
+- [x] `browser.local` (portable) + `browser.engine` gated by `playwright_available()`
+- [x] OS application adapters (macOS / Windows / Linux) + ApplicationScope allowlists
+- [x] `evaluate_scope` fail-closed for app/network/process allowlists; cgroup still UNSUPPORTED when required
+- [x] Optional `[browser]` extra in `pyproject.toml`
+- [x] Optional model factory env (Puter / Ollama / Ghost / OpenAI-compatible)
+
+### Still open (polish)
+
+- [ ] Always register `LocalBrowserAdapter` even when Playwright engine is registered (runtime fallback)
+- [ ] Package `__init__` refresh (`shea`, `execution`, `model`, `app/adapters/__init__.py`)
+- [ ] Production default real `ExecutionBoundary` (not unsafe-by-default)
+- [ ] Narrow CLI-facing runtime surface to interaction + reconcile
+- [ ] GUI/API interaction adapters beyond CLI
+- [ ] Memory, activation/audio, extensions, richer observability

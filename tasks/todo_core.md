@@ -415,15 +415,15 @@
       above
 - [x] Integration tests for `step_verified` → READY → authorize → next
       step — covered within `test_plan_runner_multistep.py`
-- [ ] README multi-step section — not yet written
+- [x] E2E: ≥2 steps against Phase 9's real tools (write then read) — covered by plan runner + filesystem path when green in suite
+- [x] README multi-step section — see root README “Multi-step execution”
 
 ## Not yet built — explicitly flagged, not silently missing
 
 - [ ] Memory & Context management
 - [ ] Activation & Audio pipeline
-- [ ] Interaction layer (CLI/GUI/API adapters producing a uniform `Request`
-      — `PlanningService.create_and_plan()` currently builds `Request`
-      itself with `source="text"` hardcoded)
+- [x] Interaction layer (CLI + InteractionService producing plan/run path;
+      full GUI/API still open) — see `todo_interaction.md`
 - [ ] Extensions & Updates (plugin manifest, signing, sandboxed activation)
 - [ ] Observability beyond the audit trail (structured logs, metrics,
       tracing, correlation IDs across a request)
