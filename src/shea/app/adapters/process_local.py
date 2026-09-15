@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
+import resource
 import subprocess
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from shea.app.contracts import (
     AdapterResult,
@@ -97,26 +99,82 @@ class LocalProcessAdapter:
             else 1_000_000
         )
 
+        want_session = bool(scope.isolation.require_new_session)
+        isolation_meta: dict[str, object] = {
+            "shell": False,
+            "new_session": False,
+            "rlimit_attempted": False,
+        }
+
+        run_kwargs: dict[str, Any] = {
+            "capture_output": True,
+            "timeout": timeout_s,
+            "env": env,
+            "shell": False,
+            "check": False,
+        }
+
+        # Unix: new session + optional RLIMIT in child. Windows: no preexec_fn.
+        if hasattr(subprocess, "STARTF_USESHOWWINDOW"):
+            # Windows — session/rlimit not applied the same way
+            isolation_meta["platform"] = "windows"
+        else:
+            isolation_meta["platform"] = "posix"
+
+            def _preexec() -> None:
+                if want_session:
+                    os.setsid()
+                if scope.resources.wall_time_ms is not None:
+                    cpu_s = max(1, int(scope.resources.wall_time_ms / 1000))
+                    try:
+                        resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s))
+                        isolation_meta["rlimit_attempted"] = True
+                    except (ValueError, OSError):
+                        pass
+                if scope.resources.memory_bytes is not None:
+                    try:
+                        resource.setrlimit(
+                            resource.RLIMIT_AS,
+                            (scope.resources.memory_bytes, scope.resources.memory_bytes),
+                        )
+                        isolation_meta["rlimit_attempted"] = True
+                    except (ValueError, OSError):
+                        pass
+
+            if want_session or scope.resources.memory_bytes is not None or (
+                scope.resources.wall_time_ms is not None and want_session
+            ):
+                run_kwargs["preexec_fn"] = _preexec
+                isolation_meta["new_session"] = want_session
+                isolation_meta["rlimit_attempted"] = (
+                    scope.resources.memory_bytes is not None
+                    or scope.resources.wall_time_ms is not None
+                )
+
         try:
-            completed = subprocess.run(  # noqa: S603 — argv list, no shell
-                argv_list,
-                capture_output=True,
-                timeout=timeout_s,
-                env=env,
-                shell=False,
-                check=False,
-            )
+            completed = cast(
+                subprocess.CompletedProcess[bytes],
+                subprocess.run(argv_list, **run_kwargs)
+                )  # noqa: S603
         except subprocess.TimeoutExpired as exc:
             return AdapterResult(
                 outcome=AppOutcome.UNKNOWN,
                 error=f"wall_time exceeded: {exc}",
-                evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
+                evidence={
+                    "receipt_id": receipt.id,
+                    "attempt_id": attempt.id,
+                    "isolation": isolation_meta,
+                },
             )
         except OSError as exc:
             return AdapterResult(
                 outcome=AppOutcome.FAILURE,
                 error=str(exc),
-                evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
+                evidence={
+                    "receipt_id": receipt.id,
+                    "attempt_id": attempt.id,
+                    "isolation": isolation_meta,
+                },
             )
 
         stdout = completed.stdout[:output_limit]
@@ -133,8 +191,12 @@ class LocalProcessAdapter:
                 "stdout": stdout.decode("utf-8", errors="replace"),
                 "stderr": stderr.decode("utf-8", errors="replace"),
                 "argv0": argv_list[0],
+                "isolation": isolation_meta,
+                "postcondition": "process_completed",
             },
-            error=None if outcome is AppOutcome.SUCCESS else f"exit {completed.returncode}",
+            error=None
+            if outcome is AppOutcome.SUCCESS
+            else f"exit {completed.returncode}",
         )
 
     def _executable_allow_error(

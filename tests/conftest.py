@@ -12,6 +12,10 @@ from shea.app.adapters.application_linux import LinuxApplicationAdapter
 from shea.app.adapters.application_macos import MacOSApplicationAdapter
 from shea.app.adapters.application_stub import ApplicationStubAdapter
 from shea.app.adapters.browser_local import LocalBrowserAdapter
+from shea.app.adapters.browser_playwright import (
+    PlaywrightBrowserAdapter,
+    playwright_available,
+)
 from shea.app.adapters.network_local import LocalNetworkAdapter
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.identity import IdentityResolver, IdentityRevalidator
@@ -327,9 +331,12 @@ def execution_supervisor(
         MacOSApplicationAdapter(),
         ApplicationStubAdapter(),
         LocalNetworkAdapter(policy=network_policy),
-        LocalBrowserAdapter(),
         ToolExecutorAdapter(tool_executor),  # agent tools still last-or-first by supports()
     ]
+    if playwright_available():
+        adapters.append(PlaywrightBrowserAdapter())
+    else:
+        adapters.append(LocalBrowserAdapter())
 
     return ExecutionSupervisor(
         adapters=adapters,
@@ -623,3 +630,8 @@ def app_recovery_repository(
     conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
 ) -> SqliteAppRecoveryRepository:
     return SqliteAppRecoveryRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
+def permit_authority() -> ExecutionPermitAuthority:
+    return ExecutionPermitAuthority()

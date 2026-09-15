@@ -13,7 +13,12 @@ from shea.app.adapters.application_stub import ApplicationStubAdapter
 from shea.app.adapters.application_windows import WindowsApplicationAdapter
 from shea.app.adapters.base import Adapter
 from shea.app.adapters.browser_local import LocalBrowserAdapter
+from shea.app.adapters.browser_playwright import (
+    PlaywrightBrowserAdapter,
+    playwright_available,
+)
 from shea.app.adapters.network_local import LocalNetworkAdapter
+from shea.app.adapters.process_local import LocalProcessAdapter
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.identity import IdentityResolver, IdentityRevalidator
 from shea.app.interaction.service import InteractionService
@@ -110,6 +115,7 @@ def build_runtime(
     register_demo_intents: bool = True,
     include_ep_network: bool = False,
     include_ep_application: bool = False,
+    include_ep_process: bool = False,
 ) -> SheaRuntime:
     """Build the V1 runtime and reconcile unfinished app-plane work.
 
@@ -177,6 +183,8 @@ def build_runtime(
         require_permit=True,
     )
     adapters: list[Adapter] = []
+    if include_ep_process:
+        adapters.append(LocalProcessAdapter())
     if include_ep_application:
         adapters.extend(
             [
@@ -187,12 +195,11 @@ def build_runtime(
             ]
         )
     if include_ep_network:
-        adapters.extend(
-            [
-                LocalNetworkAdapter(policy=network_policy),
-                LocalBrowserAdapter(),
-            ]
-        )
+        adapters.append(LocalNetworkAdapter(policy=network_policy))
+        if playwright_available():
+            adapters.append(PlaywrightBrowserAdapter())
+        else:
+            adapters.append(LocalBrowserAdapter())
     adapters.append(ToolExecutorAdapter(tool_executor, permit_authority=permit_authority))
 
     receipt_repository = SqliteAppReceiptRepository(conn, unit_of_work=unit_of_work)

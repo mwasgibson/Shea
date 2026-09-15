@@ -141,10 +141,12 @@ class WindowsApplicationAdapter:
         try:
             # DETACHED_PROCESS / CREATE_NEW_PROCESS_GROUP when available
             creationflags: int = 0
-            if hasattr(subprocess, "DETACHED_PROCESS"):
-                creationflags |= int(subprocess.DETACHED_PROCESS)  # type: ignore[attr-defined]
-            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-                creationflags |= int(subprocess.CREATE_NEW_PROCESS_GROUP)  # type: ignore[attr-defined]
+            detached = getattr(subprocess, "DETACHED_PROCESS", None)
+            if detached is not None:
+                creationflags |= int(detached)
+            new_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", None)
+            if new_group is not None:
+                creationflags |= int(new_group)
 
             proc = subprocess.Popen(  # noqa: S603
                 cmd,

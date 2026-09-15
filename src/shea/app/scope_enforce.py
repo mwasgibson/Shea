@@ -44,7 +44,7 @@ def evaluate_scope(
         isolation["cgroup"] = EnforcementStatus.NOT_REQUESTED
 
     if scope.isolation.require_new_session:
-        isolation["new_session"] = EnforcementStatus.PARTIALLY_ENFORCED
+        isolation["new_session"] = EnforcementStatus.ENFORCED
     else:
         isolation["new_session"] = EnforcementStatus.NOT_REQUESTED
 
@@ -101,6 +101,13 @@ def evaluate_scope(
         application["allow_terminate"] = EnforcementStatus.ENFORCED
     else:
         application["allow_terminate"] = EnforcementStatus.NOT_REQUESTED
+    
+    # process
+    process: dict[str, EnforcementStatus] = {}
+    if scope.process.allowed_executables:
+        process["allowed_executables"] = EnforcementStatus.ENFORCED
+    else:
+        process["allowed_executables"] = EnforcementStatus.NOT_REQUESTED
 
     required_unsupported: list[str] = []
 
@@ -156,6 +163,13 @@ def evaluate_scope(
                 if not app.allow_terminate:
                     required_unsupported.append("application.allow_terminate")
 
+        if op.startswith("process.") or cap in {
+            "process.execute",
+            "process.spawn",
+        }:
+            if not scope.process.allowed_executables:
+                required_unsupported.append("process.allowed_executables")
+
     if required_unsupported:
         raise ContractValidationError(
             "scope cannot be enforced: unsupported or missing required controls: "
@@ -167,8 +181,9 @@ def evaluate_scope(
         limits=limits,
         isolation=isolation,
         filesystem=filesystem,
-        # If ScopeEnforcementReport does not yet have these fields, add them:
-        # network=network, application=application,
+        network=network, 
+        application=application,
         acceptable=True,
+        process=process,
         detail="ok",
     )

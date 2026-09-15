@@ -11,6 +11,7 @@ from shea.contracts.enums import TaskState
 from shea.contracts.models import Plan, PlanStep, Task
 from shea.core.orchestrator import Orchestrator
 from shea.decision.service import DecisionService
+from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import STEP_COMPLETED, PlanRunner
 from shea.execution.service import ExecutionService
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
@@ -45,6 +46,7 @@ def workspace(filesystem_policy: FilesystemPolicy) -> Path:
 
 def test_two_step_write_then_read(
     ready_task: Task,
+    permit_authority: ExecutionPermitAuthority,
     execution_supervisor: ExecutionSupervisor,
     orchestrator: Orchestrator,
     decision_service: DecisionService,
@@ -72,11 +74,15 @@ def test_two_step_write_then_read(
         [BuiltinFilesystemProvider(filesystem_policy)],
         verifier_registry=verifier_registry,
     )
-    executor = ToolExecutor(registry, allow_unsafe_execution=True)
+    executor = ToolExecutor(
+        registry, allow_unsafe_execution=True, 
+        permit_authority=permit_authority
+    )
 
     # Same wiring as conftest / e2e — audit + unit_of_work required
     execution_service = ExecutionService(
         tool_executor=executor,
+        permit_authority=permit_authority,
         execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
         authorization_repository=authorization_repository,

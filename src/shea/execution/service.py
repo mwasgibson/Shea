@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
-from shea.app.contracts import (
-    ExecutionContract,
-    IdentityKind,
-    IdentityRequirements,
-    RequestedTarget,
+from shea.app.contracts import ExecutionContract
+from shea.app.identities import (
+    IdentityAssurance,
 )
-from shea.app.identities import IdentityAssurance
+from shea.app.identities import (
+    IdentityKind as IdentityKind,
+)
+from shea.app.identities import (
+    IdentityRequirements as IdentityRequirements,
+)
+from shea.app.identities import (
+    RequestedTarget as RequestedTarget,
+)
 from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
@@ -37,7 +44,9 @@ from shea.security.exceptions import (
     AuthorizationExpiredError,
 )
 from shea.security.service import SecurityService
-from shea.tools.executor import CapabilityNotAuthorizedError, ToolExecutor
+
+if TYPE_CHECKING:
+    from shea.tools.executor import ToolExecutor
 
 _ADVANCE_EVENT_BY_OUTCOME: dict[ExecutionOutcome, str] = {
     ExecutionOutcome.SUCCESS: "execution_complete",
@@ -180,7 +189,10 @@ class ExecutionService:
         self._security = security_service
         self._uow = unit_of_work
         self._clock = clock
-        self._execution_supervisor.ensure_adapter(ToolExecutorAdapter(tool_executor))
+        self._permit_authority = permit_authority or ExecutionPermitAuthority()
+        self._execution_supervisor.ensure_adapter(
+            ToolExecutorAdapter(tool_executor, permit_authority=permit_authority)
+        )
         
     @staticmethod
     def _map_app_outcome(outcome: object) -> ExecutionOutcome:
@@ -250,6 +262,7 @@ class ExecutionService:
 
         authorized_capabilities = frozenset(decision.capabilities)
 
+        from shea.tools.executor import CapabilityNotAuthorizedError
         try:
             self._tool_executor.validate_capabilities(request, authorized_capabilities)
         except CapabilityNotAuthorizedError as exc:
@@ -275,6 +288,13 @@ class ExecutionService:
             arguments=request.arguments,
             capabilities=authorized_capabilities,
         )
+        permit_dict = {
+            "token": permit.token,
+            "tool": permit.tool,
+            "action": permit.action,
+            "arguments_digest": permit.arguments_digest,
+            "capabilities_digest": permit.capabilities_digest,
+        }
 
         contract = ExecutionContract(
             contract_id=self._ids.new_id(),
@@ -313,13 +333,7 @@ class ExecutionService:
                 "_authorized_capabilities": tuple(
                     sorted(authorized_capabilities)
                 ),
-                "_execution_permit": {
-                    "token": permit.token,
-                    "tool": permit.tool,
-                    "action": permit.action,
-                    "arguments_digest": permit.arguments_digest,
-                    "capabilities_digest": permit.capabilities_digest,
-                },
+                "_execution_permit": permit_dict,
                 "idempotency_key": idempotency_key,
             },
         )

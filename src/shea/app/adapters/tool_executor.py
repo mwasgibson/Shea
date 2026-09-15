@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from shea.app.contracts import (
     AdapterResult,
@@ -11,7 +11,9 @@ from shea.app.contracts import (
 from shea.app.enums import AppOutcome
 from shea.contracts.models import ToolRequest
 from shea.execution.permit import ExecutionPermit, ExecutionPermitAuthority
-from shea.tools.executor import ToolExecutor
+
+if TYPE_CHECKING:
+    from shea.tools.executor import ToolExecutor
 
 
 class ToolExecutorAdapter:

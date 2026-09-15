@@ -160,6 +160,7 @@ class LocalNetworkAdapter:
                 if parsed.query:
                     path = f"{path}?{parsed.query}"
 
+                conn: HTTPConnection
                 if parsed.scheme == "https":
                     conn = PinnedHTTPSConnection(
                         host=resolved.host,

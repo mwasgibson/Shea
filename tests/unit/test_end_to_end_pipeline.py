@@ -6,6 +6,7 @@ from shea.contracts.enums import ExecutionOutcome, RecoveryStrategy, TaskState
 from shea.contracts.models import ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
 from shea.decision.service import DecisionService
+from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.service import ExecutionService
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
@@ -33,6 +34,7 @@ def test_full_pipeline_from_raw_text_to_completed(
     planning_service: PlanningService,
     decision_service: DecisionService,
     tool_executor: ToolExecutor,
+    permit_authority: ExecutionPermitAuthority,
     execution_supervisor: ExecutionSupervisor,
     orchestrator: Orchestrator,
     authorization_repository: SqliteAuthorizationRepository,
@@ -69,6 +71,7 @@ def test_full_pipeline_from_raw_text_to_completed(
 
     execution_service = ExecutionService(
         tool_executor=tool_executor,
+        permit_authority=permit_authority,
         execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
         authorization_repository=authorization_repository,
@@ -145,6 +148,7 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     planning_service: PlanningService,
     decision_service: DecisionService,
     tool_executor: ToolExecutor,
+    permit_authority: ExecutionPermitAuthority,
     execution_supervisor: ExecutionSupervisor,
     orchestrator: Orchestrator,
     authorization_repository: SqliteAuthorizationRepository,
@@ -181,6 +185,7 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
 
     execution_service = ExecutionService(
         tool_executor=tool_executor,
+        permit_authority=permit_authority,
         execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
         authorization_repository=authorization_repository,

@@ -9,6 +9,7 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, RiskLevel, TaskState
 from shea.contracts.models import Decision, Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
+from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.service import (
     ExecutionService,
     MissingDecisionError,
@@ -213,6 +214,7 @@ def test_execution_service_transaction_rolls_back_on_audit_failure(
     running_task: Task,
     unit_of_work: SqliteUnitOfWork,
     orchestrator: Orchestrator,
+    permit_authority: ExecutionPermitAuthority,
     execution_supervisor: ExecutionSupervisor,
     tool_executor: ToolExecutor,
     authorization_repository: AuthorizationRepository,
@@ -245,6 +247,7 @@ def test_execution_service_transaction_rolls_back_on_audit_failure(
     )
     broken_service = ExecutionService(
         tool_executor=tool_executor,
+        permit_authority=permit_authority,
         execution_supervisor=execution_supervisor,
         orchestrator=orchestrator,
         authorization_repository=authorization_repository,
