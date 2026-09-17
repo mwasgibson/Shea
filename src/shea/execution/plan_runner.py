@@ -138,13 +138,11 @@ class PlanRunner:
                 current = exec_result.task
 
                 if exec_result.outcome is not ExecutionOutcome.SUCCESS:
-                    print(f"\n[DEBUG] Execution failed: {exec_result.response.error}")
                     self._set_step_state(plan, step, STEP_FAILED)
                     stopped_early = True
                     break
 
                 if current.state is not TaskState.VERIFYING:
-                    print(f"\n[DEBUG] Task not VERIFYING after execute: {current.state}")
                     self._set_step_state(plan, step, STEP_FAILED)
                     stopped_early = True
                     break
@@ -153,7 +151,6 @@ class PlanRunner:
                     current, step.tool, exec_result.response.data if exec_result.response else None
                 )
                 if scan.flagged:
-                    print(f"\n[DEBUG] Security scan flagged: {scan.reason}")
                     self._set_step_state(plan, step, STEP_FAILED)
                     stopped_early = True
                     break
@@ -162,7 +159,6 @@ class PlanRunner:
                 current = ver.task
 
                 if not ver.verification.verified:
-                    print(f"\n[DEBUG] Verification rejected: {ver.verification.explanation}")
                     self._set_step_state(plan, step, STEP_FAILED)
                     stopped_early = True
                     break
@@ -171,7 +167,7 @@ class PlanRunner:
                 completed_count += 1
 
             except Exception as err:
-                print(f"\n[DEBUG EXCEPTION IN STEP]: {type(err).__name__}: {err}")
+                print(f"\n {type(err).__name__}: {err}")
                 self._set_step_state(plan, step, STEP_FAILED)
                 stopped_early = True
                 break

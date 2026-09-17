@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from unittest.mock import patch
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +24,7 @@ from shea.app.scopes import (
     ResourceLimits,
     ScopeEnforcementReport,
 )
+from shea.bootstrap import build_runtime
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SHEA_LIVE_NETWORK") != "1",
@@ -99,3 +102,37 @@ def test_live_browser_navigate_example_com() -> None:
     assert "example" in title or "example" in (
         result.evidence.get("text_preview") or ""
     ).lower()
+
+
+def test_ep_network_always_includes_local_browser(tmp_path: Path):
+    with patch(
+        "shea.bootstrap.playwright_available",
+        return_value=True,
+    ):
+        runtime = build_runtime(
+            tmp_path / "t.db",
+            workspace=tmp_path / "ws",
+            include_ep_network=True,
+        )
+        names = [getattr(a, "name", "") for a in runtime.execution_supervisor._adapters]  # pyright: ignore[reportPrivateUsage]
+        assert "browser.local" in names
+        assert "network.local" in names
+        # engine may or may not appear depending on patch target; with patch True:
+        assert "browser.engine" in names
+        runtime.conn.close()
+
+
+def test_ep_network_without_playwright_still_has_local(tmp_path: Path):
+    with patch(
+        "shea.bootstrap.playwright_available",
+        return_value=False,
+    ):
+        runtime = build_runtime(
+            tmp_path / "t.db",
+            workspace=tmp_path / "ws",
+            include_ep_network=True,
+        )
+        names = [getattr(a, "name", "") for a in runtime.execution_supervisor._adapters]  # pyright: ignore[reportPrivateUsage]
+        assert "browser.local" in names
+        assert "browser.engine" not in names
+        runtime.conn.close()

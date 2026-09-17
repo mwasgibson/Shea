@@ -54,19 +54,31 @@ def main(argv: Sequence[str] | None = None) -> None:
         if result.error:
             print(f"error: {result.error}", file=sys.stderr)
             sys.exit(1)
-        print(f"plan_steps={len(result.planning.plan.steps)}")
+
+        plan = result.planning.plan
+        print(f"plan_steps={len(plan.steps)}")
+        for i, step in enumerate(plan.steps, start=1):
+            print(f"  {i}. {step.tool} {step.description if step.description else ''}".rstrip())
+
         if result.run is not None:
             for step_result in result.run.step_results:
                 data = step_result.response.data
                 if isinstance(data, dict):
                     typed_data = cast(dict[str, object], data)
                     content = typed_data.get("content")
-                    if isinstance(content, str):
+                    if isinstance(content, str) and content.strip():
                         print(content)
+                if step_result.response.error:
+                    print(
+                        f"step_error: {step_result.response.error}",
+                        file=sys.stderr,
+                    )
             print(
                 f"completed_steps={result.run.completed_steps} "
                 f"stopped_early={result.run.stopped_early}"
             )
+        elif args.no_execute:
+            print("plan_only=true (use run without --no-execute to execute)")
         return
 
     parser.error(f"unknown command {args.command!r}")
