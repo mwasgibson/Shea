@@ -1,5 +1,5 @@
 from .permit import ExecutionPermit, ExecutionPermitAuthority
-from .plan_runner import PlanRunResult, PlanRunner
+from .plan_runner import PlanRunner, PlanRunResult
 from .service import (
     DuplicateExecutionSuppressedError,
     ExecutionOutcomeRecord,

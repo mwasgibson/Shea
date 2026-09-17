@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Task
@@ -8,6 +10,9 @@ from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import TaskRepository
 from shea.ports.unit_of_work import UnitOfWork
 from shea.state_machine.transitions import IllegalTransitionError, next_state
+
+if TYPE_CHECKING:
+    from shea.events.channels import TaskChannel
 
 
 class TaskNotFoundError(Exception):
@@ -45,12 +50,14 @@ class Orchestrator:
         id_generator: IdGenerator,
         *,
         unit_of_work: UnitOfWork,
+        task_channel: TaskChannel | None = None,
     ) -> None:
         self._tasks = task_repository
         self._audit = audit
         self._clock = clock
         self._ids = id_generator
         self._uow = unit_of_work
+        self._events = task_channel
 
     def create_task(self, *, session_id: str, request_id: str) -> Task:
         now = self._clock.now()
@@ -74,6 +81,8 @@ class Orchestrator:
                 task_id=task.id,
                 metadata={"session_id": session_id},
             )
+        if self._events is not None:
+            self._events.created(task.id, session_id, request_id)
         return task
 
     def get_task(self, task_id: str) -> Task:
@@ -123,6 +132,10 @@ class Orchestrator:
                 task_id=task.id,
                 metadata={"from_state": from_state.value, "to_state": new_state.value},
             )
+        if self._events is not None:
+            self._events.state_changed(
+                task.id, from_state, new_state, event, request_id=task.request_id,
+            )
         return task
 
     def attach_plan(self, task_id: str, plan_id: str) -> Task:
@@ -146,4 +159,6 @@ class Orchestrator:
                 task_id=task.id,
                 metadata={"plan_id": plan_id},
             )
+        if self._events is not None:
+            self._events.plan_attached(task.id, plan_id, request_id=task.request_id)
         return task

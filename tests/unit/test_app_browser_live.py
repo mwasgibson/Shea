@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 

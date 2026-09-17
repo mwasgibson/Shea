@@ -27,12 +27,21 @@ from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
 from shea.bootstrap_demo import register_demo_intent
 from shea.core.orchestrator import Orchestrator
+from shea.credentials.broker import SheaCredentialBroker
+from shea.credentials.keyring_adapter import KeyringSecureStore
+from shea.credentials.ports import CredentialBroker
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
+from shea.events.bus import EventBus
+from shea.events.channels import SecurityChannel, TaskChannel
 from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import PlanRunner
 from shea.execution.service import ExecutionService
+from shea.extensions.loader import PluginLoader
+from shea.memory.lifecycle.expiration import MemoryLifecycleEnforcer
+from shea.memory.retrieval.ranking import BoundedContextAssembler, HybridMemoryRetriever
+from shea.memory.service import MemoryService
 from shea.model.factory import model_provider_from_env
 from shea.persistence.sqlite.app_attempt_repository import SqliteAppAttemptRepository
 from shea.persistence.sqlite.app_evidence_repository import SqliteAppEvidenceRepository
@@ -45,6 +54,7 @@ from shea.persistence.sqlite.authorization_repository import SqliteAuthorization
 from shea.persistence.sqlite.connection import open_connection
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.intent_repository import SqliteIntentRepository
+from shea.persistence.sqlite.memory_repository import SqliteMemoryRepository
 from shea.persistence.sqlite.migrator import run_migrations
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
 from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAttemptRepository
@@ -52,11 +62,14 @@ from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentReposito
 from shea.persistence.sqlite.task_repository import SqliteTaskRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
+from shea.persistence.sqlite.vault_repository import SqliteVaultRepository
 from shea.persistence.sqlite.verification_repository import SqliteVerificationRepository
+from shea.persistence.vector.fts_adapter import FtsVectorStore
 from shea.planning.service import PlanningService
 from shea.planning.templates import PlanTemplateRegistry
 from shea.ports.execution_boundary import ExecutionBoundary
 from shea.ports.model_provider import ModelProvider
+from shea.profiles.service import ProfileService
 from shea.recovery.service import RecoveryService
 from shea.security.filesystem_policy import FilesystemPolicy
 from shea.security.gate import SecurityGate
@@ -88,6 +101,10 @@ class SheaRuntime:
     decision_service: DecisionService
     verification_service: VerificationService
     security_service: SecurityService
+    event_bus: EventBus
+    memory_service: MemoryService
+    profile_service: ProfileService
+    credential_broker: CredentialBroker
 
     def reconcile_app_plane(self) -> list[ReconciliationResult]:
         return self.recovery_service.reconcile_app_plane()
@@ -129,6 +146,9 @@ def build_runtime(
     clock = SystemClock()
     id_generator = UuidIdGenerator()
 
+    event_bus = EventBus()
+    task_channel = TaskChannel(event_bus, clock, id_generator)
+
     task_repository = SqliteTaskRepository(conn, unit_of_work=unit_of_work)
     plan_repository = SqlitePlanRepository(conn, unit_of_work=unit_of_work)
     audit_sink = SqliteAuditSink(conn, unit_of_work=unit_of_work)
@@ -139,10 +159,14 @@ def build_runtime(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
+        task_channel=task_channel,
     )
     provider = model_provider if model_provider is not None else model_provider_from_env()
 
     decision_repository = SqliteDecisionRepository(conn, unit_of_work=unit_of_work)
+    vault_repo = SqliteVaultRepository(conn, unit_of_work=unit_of_work)
+    secure_store = KeyringSecureStore(service_name="shea_agent")
+    credential_broker = SheaCredentialBroker(vault=vault_repo, secure_store=secure_store)
     risk_repository = SqliteRiskAssessmentRepository(conn, unit_of_work=unit_of_work)
     authorization_repository = SqliteAuthorizationRepository(conn, unit_of_work=unit_of_work)
     intent_repository = SqliteIntentRepository(conn, unit_of_work=unit_of_work)
@@ -242,6 +266,7 @@ def build_runtime(
         id_generator=id_generator,
         unit_of_work=unit_of_work,
     )
+    security_channel = SecurityChannel(event_bus, clock, id_generator)
     security_service = SecurityService(
         gate=SecurityGate(
             network_policy=network_policy,
@@ -251,6 +276,7 @@ def build_runtime(
         orchestrator=orchestrator,
         audit=audit,
         unit_of_work=unit_of_work,
+        security_channel=security_channel,
     )
     execution_service = ExecutionService(
         permit_authority=permit_authority,
@@ -266,6 +292,7 @@ def build_runtime(
         security_service=security_service,
         unit_of_work=unit_of_work,
         clock=clock,
+        credential_broker=credential_broker,
     )
     verification_service = VerificationService(
         verifier_registry=verifier_registry,
@@ -308,6 +335,21 @@ def build_runtime(
         plan_repository=plan_repository,
         tool_registry=registry,
     )
+    
+    memory_store = SqliteMemoryRepository(conn, unit_of_work=unit_of_work)
+    vector_store = FtsVectorStore(conn, unit_of_work=unit_of_work)
+    memory_retriever = HybridMemoryRetriever(vector_store, memory_store)
+    context_assembler = BoundedContextAssembler(clock)
+    memory_lifecycle = MemoryLifecycleEnforcer(conn, clock, unit_of_work=unit_of_work)
+    profile_service = ProfileService(conn, unit_of_work=unit_of_work)
+    memory_service = MemoryService(
+        memory_store=memory_store,
+        vector_store=vector_store,
+        retriever=memory_retriever,
+        assembler=context_assembler,
+        lifecycle=memory_lifecycle,
+    )
+
     interaction_service = InteractionService(
         planning_service=planning_service,
         plan_runner=plan_runner,
@@ -327,6 +369,14 @@ def build_runtime(
         decision_service=decision_service,
         verification_service=verification_service,
         security_service=security_service,
+        event_bus=event_bus,
+        memory_service=memory_service,
+        profile_service=profile_service,
+        credential_broker=credential_broker,
     )
     runtime.reconcile_app_plane()
+
+    # Load dynamic extensions/plugins
+    plugin_loader = PluginLoader(plugin_dir=f"{workspace}/plugins")
+    plugin_loader.load_plugins(runtime)
     return runtime

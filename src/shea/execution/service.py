@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.contracts import ExecutionContract
@@ -22,7 +23,10 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
+from shea.credentials import CredentialReference
+from shea.credentials.ports import CredentialBroker
 from shea.execution.permit import ExecutionPermitAuthority
+from shea.observability.metrics import global_metrics
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import (
@@ -175,6 +179,7 @@ class ExecutionService:
         security_service: SecurityService,
         unit_of_work: UnitOfWork,
         clock: Clock,
+        credential_broker: CredentialBroker | None = None,
     ) -> None:
         self._permits = permit_authority
         self._tool_executor = tool_executor
@@ -189,6 +194,7 @@ class ExecutionService:
         self._security = security_service
         self._uow = unit_of_work
         self._clock = clock
+        self._credential_broker = credential_broker
         self._permit_authority = permit_authority or ExecutionPermitAuthority()
         self._execution_supervisor.ensure_adapter(
             ToolExecutorAdapter(tool_executor, permit_authority=permit_authority)
@@ -212,6 +218,7 @@ class ExecutionService:
             ) from exc
 
     def execute(self, task: Task, request: ToolRequest) -> ExecutionOutcomeRecord:
+        start_time = time.perf_counter()
         if task.state is not TaskState.RUNNING:
             raise TaskNotRunningError(task.id, task.state)
 
@@ -281,11 +288,28 @@ class ExecutionService:
             )
             raise
 
+        # Just-in-time Credential Resolution
+        # If the arguments contain a credential reference 
+        # (e.g., {"api_key": {"__credential_ref__": "my_token"}}),
+        # we resolve it into the raw secret so the tool actually receives it.
+        resolved_arguments = dict(request.arguments)
+        if self._credential_broker:
+            for key, value in resolved_arguments.items():
+                if isinstance(value, dict) and "__credential_ref__" in value:
+                    ref_id = cast(
+                        str,
+                        value["__credential_ref__"]
+                    )
+                    # Construct a reference; real payloads may include more metadata.
+                    ref = CredentialReference(id=ref_id, name=ref_id, description=None)
+                    scoped_cred = self._credential_broker.resolve(ref, request.tool)
+                    resolved_arguments[key] = scoped_cred.secret_value
+
         authorization = self._authorizations.list_by_task(task.id)[-1]
         permit = self._tool_executor.mint_permit(
             tool=request.tool,
             action=request.action,
-            arguments=request.arguments,
+            arguments=resolved_arguments,
             capabilities=authorized_capabilities,
         )
         permit_dict = {
@@ -306,7 +330,7 @@ class ExecutionService:
             ),
             operation=f"tool.{request.tool}.{request.action}",
             target=request.tool,
-            arguments=dict(request.arguments),
+            arguments=resolved_arguments,
             expires_at=authorization.expires_at,
             requested_target=RequestedTarget(
                 kind=IdentityKind.OPAQUE,
@@ -440,6 +464,11 @@ class ExecutionService:
                 _ADVANCE_EVENT_BY_OUTCOME[result.outcome],
             )
 
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        global_metrics.record_tool_execution(
+            duration_ms=duration_ms,
+            success=(result.outcome is ExecutionOutcome.SUCCESS)
+        )
         return ExecutionOutcomeRecord(
             response=result.response, outcome=result.outcome, task=advanced_task
         )

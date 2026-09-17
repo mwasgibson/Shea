@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Task, ToolRequest
@@ -9,6 +11,9 @@ from shea.ports.unit_of_work import UnitOfWork
 from .exceptions import SecurityViolationError
 from .gate import SecurityGate
 from .injection import InjectionScanResult, PromptInjectionDetector
+
+if TYPE_CHECKING:
+    from shea.events.channels import SecurityChannel
 
 
 class TaskNotRunningForSecurityCheckError(Exception):
@@ -57,7 +62,8 @@ class SecurityService:
         orchestrator: Orchestrator,
         audit: AuditRecorder,
         unit_of_work: UnitOfWork,
-        halt_on_injection: bool = False
+        halt_on_injection: bool = False,
+        security_channel: SecurityChannel | None = None,
     ) -> None:
         self._gate = gate
         self._injection_detector = injection_detector
@@ -65,6 +71,7 @@ class SecurityService:
         self._audit = audit
         self._uow = unit_of_work
         self._halt_on_injection = halt_on_injection
+        self._events = security_channel
 
     def enforce(self, task: Task, request: ToolRequest) -> None:
         if task.state is not TaskState.RUNNING:
@@ -90,6 +97,11 @@ class SecurityService:
                     },
                 )
                 self._orchestrator.advance(task.id, "security_halt")
+            if self._events is not None:
+                self._events.violation(
+                    task.id, request.tool, exc.category, exc.reason,
+                    request_id=task.request_id,
+                )
             raise
 
         self._audit.record(
@@ -102,6 +114,8 @@ class SecurityService:
             task_id=task.id,
             metadata={"tool": request.tool},
         )
+        if self._events is not None:
+            self._events.request_cleared(task.id, request.tool, request_id=task.request_id)
 
     def scan_output(self, task: Task, tool_name: str, data: object) -> InjectionScanResult:
         text = data if isinstance(data, str) else str(data)
@@ -124,6 +138,14 @@ class SecurityService:
                     "quarantined": True,
                 },
             )
+            if self._events is not None:
+                self._events.injection_detected(
+                    task.id,
+                    tool_name,
+                    list(result.matched_phrases),
+                    halted=self._halt_on_injection,
+                    request_id=task.request_id,
+                )
             if self._halt_on_injection:
                 with self._uow:
                     self._orchestrator.advance(task.id, "security_halt")
@@ -131,6 +153,6 @@ class SecurityService:
                     tool_name,
                     "prompt_injection",
                     f"injection patterns in tool output: {list(result.matched_phrases)}",
-                )               
+                )
 
         return result

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shea Unified GUI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Sidebar: Memory & System State -->
+      <aside id="sidebar">
+        <div class="sidebar-header">
+          <h2>Shea Agent</h2>
+          <span id="status-indicator" class="status offline">Offline</span>
+        </div>
+
+        <div class="sidebar-section">
+          <h3>Navigation</h3>
+          <ul id="nav-list" style="list-style: none; padding: 0">
+            <li style="margin-bottom: 10px">
+              <a
+                href="index.html"
+                style="
+                  text-decoration: none;
+                  color: var(--accent-color);
+                  font-weight: bold;
+                "
+                >💬 Chat Interface</a
+              >
+            </li>
+            <li>
+              <a
+                href="dashboard.html"
+                style="
+                  text-decoration: none;
+                  color: var(--text-secondary);
+                  font-weight: bold;
+                "
+                >📊 Observability</a
+              >
+            </li>
+          </ul>
+        </div>
+
+        <div
+          class="sidebar-section"
+          style="border-top: 1px solid var(--border-color)"
+        >
+          <h3>Memory Brain <button id="btn-refresh-memory">↻</button></h3>
+          <ul id="memory-list">
+            <!-- Memories injected here -->
+          </ul>
+        </div>
+      </aside>
+
+      <!-- Main Content: Chat Interface -->
+      <main id="chat-container">
+        <div id="chat-history">
+          <div class="message system">
+            Welcome to the unified Shea Agent interface.
+          </div>
+        </div>
+
+        <div id="input-area">
+          <form id="chat-form">
+            <input
+              type="text"
+              id="chat-input"
+              placeholder="Give the agent a task..."
+              autocomplete="off"
+              required
+            />
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </main>
+    </div>
+
+    <!-- Vanilla JS Logic -->
+    <script src="app.js"></script>
+  </body>
+</html>

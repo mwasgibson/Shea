@@ -33,9 +33,13 @@ class SecretRedactor:
     patterns: tuple[re.Pattern[str], ...] = field(
         default_factory=lambda: DEFAULT_SECRET_PATTERNS
     )
+    exact_secrets: frozenset[str] = field(default_factory=frozenset[str])
 
     def redact(self, value: str) -> str:
         redacted = value
+        for secret in self.exact_secrets:
+            if secret:
+                redacted = redacted.replace(secret, REDACTED)
         for pattern in self.patterns:
             redacted = pattern.sub(REDACTED, redacted)
         return redacted
