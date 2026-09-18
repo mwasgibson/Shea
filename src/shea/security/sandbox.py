@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import sys
-from typing import Any, cast
+from typing import Any
 
 from shea.contracts.models import ToolRequest, ToolResponse
 from shea.ports.execution_boundary import BoundaryHandler, ExecutionScope
@@ -13,23 +12,20 @@ from .secrets import SecretRedactor
 
 
 class SandboxedExecutionBoundary:
-    """Structurally satisfies shea.ports.execution_boundary.ExecutionBoundary.
+    """In-process *resource* boundary — not a full OS sandbox.
 
-    This is the "Sandbox" pipeline stage — the OS/runtime-level
-    constraints applied to an already-authorized, already-security-cleared
-    call. It deliberately does NOT re-check URLs or paths: that's
-    SecurityGate/SecurityService's job, run once, upstream of ToolExecutor
-    entirely, using the general shape-based scan across all arguments
-    rather than this layer's own narrower copy of the same logic. A
-    second, different implementation of "does this look dangerous" is
-    worse than one — see the Phase 6 review in tasks/todo.md for the bug
-    this replaced.
+    Pipeline position:
+        SecurityGate → (adapter OS isolation) → this boundary → handler
 
-    A real timeout is treated as UNKNOWN, not FAILURE — research doc
-    Section 12.13's exact example ("Shea sends payment... Network
-    connection dies... Shea never receives response... must not assume
-    'Request failed, retry'") applies directly: the handler may have
-    completed its side effect before the timeout fired.
+    Responsibilities here:
+      - wall-clock timeout → UNKNOWN (side effect may have occurred)
+      - secret redaction of response
+      - max output size
+
+    OS isolation (setsid, rlimits, NO_NEW_PRIVS) applies when an adapter
+    spawns a child via ``shea.security.isolation.make_preexec_fn``.
+    In-process tool handlers cannot be setsid'd; they only get timeout /
+    redaction / output caps from this class.
     """
 
     def __init__(self, redactor: SecretRedactor | None = None) -> None:
@@ -38,19 +34,19 @@ class SandboxedExecutionBoundary:
     def run(
         self, request: ToolRequest, handler: BoundaryHandler, scope: ExecutionScope
     ) -> ToolResponse:
-        if scope.max_runtime_seconds is not None:
+        timeout = scope.max_runtime_seconds
+        if timeout is not None:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(handler, request)
                 try:
-                    response = future.result(timeout=scope.max_runtime_seconds)
+                    response = future.result(timeout=timeout)
                 except concurrent.futures.TimeoutError as exc:
                     raise UnknownOutcomeError(
                         f"tool {request.tool!r} exceeded the "
-                        f"{scope.max_runtime_seconds}s timeout; outcome unknown"
+                        f"{timeout}s timeout; outcome unknown"
                     ) from exc
         else:
             response = handler(request)
-
 
         if scope.redact_secrets:
             response = self._redact_response(response)
@@ -60,37 +56,60 @@ class SandboxedExecutionBoundary:
             if size > scope.max_output_bytes:
                 return ToolResponse(
                     success=False,
-                    error=f"output size {size} bytes exceeds limit of {scope.max_output_bytes} bytes",
+                    data=None,
+                    error=(
+                        f"tool output exceeded max_output_bytes "
+                        f"({size} > {scope.max_output_bytes})"
+                    ),
+                    metadata={
+                        **dict(response.metadata),
+                        "output_truncated": True,
+                        "isolation_layer": "resource_boundary",
+                    },
                 )
 
-        return response
-
-    def _estimate_size(self, data: Any) -> int:
-        if isinstance(data, str):
-            return len(data.encode("utf-8", errors="replace"))
-        if isinstance(data, (bytes, bytearray)):
-            return len(data)
-        try:
-            return len(json.dumps(data).encode("utf-8"))
-        except (TypeError, ValueError):
-            return sys.getsizeof(data)
-
-
-    def _redact_response(self, response: ToolResponse) -> ToolResponse:
-        redacted_error = (
-            self._redactor.redact(response.error) if response.error else response.error
-        )
-        
-        raw_data = response.data
-        if isinstance(raw_data, dict):
-            typed_data = cast(dict[str, Any], raw_data)
-            redacted_data: Any = self._redactor.redact_mapping(typed_data)
-        else:
-            redacted_data = raw_data
-
+        meta = dict(response.metadata)
+        meta["isolation_layer"] = "resource_boundary"
+        meta["isolation_limits"] = {
+            "max_runtime_seconds": scope.max_runtime_seconds,
+            "max_output_bytes": scope.max_output_bytes,
+            "redact_secrets": scope.redact_secrets,
+        }
         return ToolResponse(
             success=response.success,
-            data=redacted_data,
-            error=redacted_error,
-            metadata=response.metadata,
+            data=response.data,
+            error=response.error,
+            metadata=meta,
         )
+
+    def _redact_response(self, response: ToolResponse) -> ToolResponse:
+        data = response.data
+        error = response.error
+        if isinstance(data, str):
+            data = self._redactor.redact(data)
+        elif data is not None:
+            try:
+                blob = json.dumps(data, default=str)
+                redacted = self._redactor.redact(blob)
+                data = json.loads(redacted)
+            except (TypeError, ValueError):
+                data = self._redactor.redact(str(data))
+        if isinstance(error, str):
+            error = self._redactor.redact(error)
+        return ToolResponse(
+            success=response.success,
+            data=data,
+            error=error,
+            metadata=dict(response.metadata),
+        )
+
+    @staticmethod
+    def _estimate_size(data: Any) -> int:
+        if isinstance(data, (bytes, bytearray)):
+            return len(data)
+        if isinstance(data, str):
+            return len(data.encode())
+        try:
+            return len(json.dumps(data, default=str).encode())
+        except (TypeError, ValueError):
+            return len(str(data).encode())

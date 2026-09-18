@@ -43,11 +43,14 @@ class InteractionService:
         explicit_user_ack: bool = True,
         actor: str = "user",
         run: bool = True,
+        profile_id: str = "system",
     ) -> InteractionResult:
         try:
             planning = self._planning.create_and_plan(
                 session_id=session_id,
                 request_text=text,
+                actor=actor,
+                profile_id=profile_id,
             )
         except Exception as e:
             # Phase E Fault Tolerance: Do not crash the entire interaction layer if LLM fails

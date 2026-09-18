@@ -57,6 +57,7 @@ class PlanStep:
     tool: str
     arguments: dict[str, Any] = field(default_factory=dict[str, Any])
     state: str = "PENDING"
+    depends_on: list[str] = field(default_factory=list[str])
 
 
 @dataclass
@@ -173,6 +174,7 @@ class Task:
     created_at: datetime
     updated_at: datetime
     plan_id: str | None = None
+    profile_snapshot: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

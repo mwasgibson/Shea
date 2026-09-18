@@ -31,6 +31,7 @@ from shea.app.ports import (
     RecoveryRepository,
 )
 from shea.app.ports.process import AdapterContext
+from shea.app.reconcile.registry import ReconcilerRegistry, default_reconciler_registry
 from shea.app.recovery import (
     ReconciliationResult,
     RecoveryIncident,
@@ -79,6 +80,7 @@ class ExecutionSupervisor:
         verification_repository: AppVerificationRepository | None = None,
         idempotency_repository: IdempotencyRepository | None = None,
         recovery_repository: RecoveryRepository | None = None,
+        reconciler_registry: ReconcilerRegistry | None = None,
     ) -> None:
         self._adapters = adapters
         self._receipts = receipt_repository
@@ -92,6 +94,7 @@ class ExecutionSupervisor:
         self._verification_repo = verification_repository
         self._idempotency_repo = idempotency_repository
         self._recovery_repo = recovery_repository
+        self._reconcilers = reconciler_registry or default_reconciler_registry()
 
     def ensure_adapter(self, adapter: Adapter) -> None:
         for index, existing in enumerate(self._adapters):
@@ -291,18 +294,23 @@ class ExecutionSupervisor:
             )
 
         # INVOKED without finalize → side effect may have occurred
-        outcome = (
-            AppOutcome.UNKNOWN
-            if reason == "attempt_invoked_not_finalized"
-            else AppOutcome.FAILURE
+        observation = self._reconcilers.observe(
+            receipt, attempt, stuck_reason=reason
         )
+        outcome = observation.outcome
         now = self._clock.now()
 
         if attempt is not None and attempt.state is not AttemptState.FINALIZED:
             attempt.state = AttemptState.FINALIZED
             attempt.finalized_at = now
             attempt.outcome = outcome
-            attempt.error = f"reconciled: {reason}"
+            attempt.error = f"reconciled: {observation.detail}"
+            if observation.evidence:
+                merged = dict(attempt.evidence or {})
+                merged.update(observation.evidence)
+                merged["reconcile_detail"] = observation.detail
+                merged["side_effect_detected"] = observation.side_effect_detected
+                attempt.evidence = merged
 
         receipt.state = ReceiptState.FINALIZED
         receipt.finalized_at = now
@@ -323,7 +331,7 @@ class ExecutionSupervisor:
                 reason=reason,
                 created_at=now,
                 updated_at=now,
-                resolution=f"finalized_as_{outcome.value}",
+                resolution=f"finalized_as_{outcome.value}:{observation.detail}",
                 fence_token=self._ids.new_id(),
             )
 
@@ -339,7 +347,7 @@ class ExecutionSupervisor:
             attempt=attempt,
             incident=incident,
             outcome=outcome,
-            detail=reason,
+            detail=observation.detail,
         )
         
     def reconcile_stuck(self) -> list[ReconciliationResult]:

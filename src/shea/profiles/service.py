@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 
 from shea.persistence.sqlite.profile_repository import SqliteProfileRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.profiles.models import UserProfile
+from shea.profiles.snapshot import ProfileSnapshot
 
 
 class ProfileService:
@@ -40,3 +42,25 @@ class ProfileService:
     def list_profiles(self) -> list[UserProfile]:
         with self._uow:
             return self._repo.list_all()
+
+    def freeze(self, profile_id: str | None, *, now: datetime | None = None) -> ProfileSnapshot:
+        """Capture a point-in-time snapshot. Call once at task creation."""
+        from datetime import UTC
+        from datetime import datetime as dt
+
+        when = now or dt.now(tz=UTC)
+        pid = profile_id or "system"
+        profile = self.get_profile(pid)
+        if profile is None:
+            return ProfileSnapshot.system(now=when) if pid == "system" else ProfileSnapshot(
+                profile_id=pid,
+                name=pid,
+                frozen_at=when,
+            )
+        return ProfileSnapshot(
+            profile_id=profile.id,
+            name=profile.name,
+            preferences=dict(profile.preferences),
+            context_rules=dict(profile.context_rules),
+            frozen_at=when,
+        )

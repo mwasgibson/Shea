@@ -14,14 +14,18 @@ from shea.contracts.models import (
     Task,
 )
 from shea.core.orchestrator import Orchestrator
+from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import (
+    AuthorizationRepository,
+    DecisionRepository,
     RecoveryAttemptRepository,
     ToolExecutionRepository,
     VerificationRepository,
 )
 from shea.ports.unit_of_work import UnitOfWork
 
+from .authority import RecoveryAuthority
 from .classifier import FailureClassifier
 from .compensator import Compensator, default_compensator
 from .planner import RecoveryPlanner
@@ -110,6 +114,9 @@ class RecoveryService:
         self,
         *,
         orchestrator: Orchestrator,
+        decision_repository: DecisionRepository | None = None,
+        authorization_repository: AuthorizationRepository | None = None,
+        clock: Clock | None = None,
         recovery_attempt_repository: RecoveryAttemptRepository,
         tool_execution_repository: ToolExecutionRepository,
         verification_repository: VerificationRepository,
@@ -122,6 +129,9 @@ class RecoveryService:
         execution_supervisor: ExecutionSupervisor | None = None,
     ) -> None:
         self._orchestrator = orchestrator
+        self._decisions = decision_repository
+        self._authorizations = authorization_repository
+        self._clock = clock
         self._attempts = recovery_attempt_repository
         self._executions = tool_execution_repository
         self._verifications = verification_repository
@@ -175,26 +185,52 @@ class RecoveryService:
 
         return decision
 
+    def _derive_authority(self, task: Task) -> RecoveryAuthority:
+        from shea.recovery.authority import RecoveryAuthority, RecoveryAuthorityError
+
+        if self._decisions is None or self._authorizations is None or self._clock is None:
+            raise RecoveryAuthorityError(
+                task.id, "recovery authority dependencies not wired"
+            )
+        decision = self._decisions.get_by_task(task.id)
+        if decision is None:
+            raise RecoveryAuthorityError(task.id, "no decision on file")
+        auths = self._authorizations.list_by_task(task.id)
+        if not auths:
+            raise RecoveryAuthorityError(task.id, "no authorization on file")
+        authorization = auths[-1]
+        return RecoveryAuthority.from_original(
+            decision=decision,
+            authorization=authorization,
+            max_attempts=self._retry.max_attempts,
+            now=self._clock.now(),
+        )
+
     def begin_recovery(self, task: Task) -> Task:
         self.reconcile_app_plane()
         task = self._orchestrator.get_task(task.id)
+
+        if task.state is not TaskState.FAILED:
+            raise TaskNotFailedError(task.id, task.state)    
+            
         previous_attempts = self._attempts.list_by_task(task.id)
         attempt_number = len(previous_attempts) + 1
+        authority = self._derive_authority(task)
+        authority.assert_can(
+            operation="retry",
+            now=self._clock.now() if self._clock else task.updated_at,
+            attempts_made=len(previous_attempts),
+        )
 
         # RetryController is the single source of truth for the attempt
         # budget now — not a locally duplicated max_attempts field that
         # could silently drift from RetryPolicy's own default.
         if not self._retry.can_retry(len(previous_attempts)):
-            if task.state == TaskState.RECOVERING:
-                self._orchestrator.advance(task.id, "recovery_failed")
             raise RecoveryExhaustedError(
                 task.id,
                 len(previous_attempts),
                 self._retry.max_attempts,
             )
-            
-        if task.state is not TaskState.FAILED:
-                    raise TaskNotFailedError(task.id, task.state)    
         
         decision = self.plan_recovery(task)
 
@@ -232,6 +268,7 @@ class RecoveryService:
                         "attempt_number": attempt_number,
                         "strategy": decision.strategy.value,
                         "delay_seconds": delay_seconds,
+                        "recovery_authority": authority.to_audit_dict(),
                     },
                 )
 
@@ -249,6 +286,13 @@ class RecoveryService:
 
         if attempt is None:
             raise MissingRecoveryAttemptError(task.id)
+        
+        authority = self._derive_authority(task)
+        authority.assert_can(
+            operation="compensate",
+            now=self._clock.now() if self._clock else task.updated_at,
+            attempts_made=max(0, attempt.attempt_number - 1),
+        )
 
         outcome = compensator(task)
 
@@ -289,6 +333,26 @@ class RecoveryService:
 
         return advanced_task
 
+
+    def stabilize(self, task: Task) -> Task:
+        if task.state is not TaskState.STABILIZING:
+            raise ValueError(f"Task is not stabilizing: {task.state}")
+            
+        # Here we could check metrics or delay, for now we immediately advance it
+        with self._uow:
+            self._audit.record(
+                actor="recovery_service",
+                component="recovery.stabilizer",
+                event_type="recovery.stabilized",
+                action="stabilize_task",
+                result="ready",
+                request_id=task.request_id,
+                task_id=task.id,
+            )
+            advanced = self._orchestrator.advance(task.id, "stabilized")
+            
+        return advanced
+
     def resolve_blocked(self, task: Task, *, resume: bool) -> Task:
         """Resolve a BLOCKED task, regardless of why it was blocked (a
         planning `block` event or an UNKNOWN execution outcome both land
@@ -299,6 +363,13 @@ class RecoveryService:
             raise TaskNotBlockedError(task.id, task.state)
 
         event = "unblock" if resume else "cancel"
+        
+        authority = self._derive_authority(task)
+        authority.assert_can(
+            operation="resolve_blocked",
+            now=self._clock.now() if self._clock else task.updated_at,
+            attempts_made=0,
+        )
 
         self._audit.record(
             actor="recovery_service",
@@ -342,7 +413,7 @@ class RecoveryService:
         """Sweep the database for tasks that were in-flight during an ungraceful shutdown
         and safely force them into terminal or stable states.
         """
-        reconciled_tasks = []
+        reconciled_tasks: list[Task] = []
         # First, ensure app-plane execution receipts are reconciled
         self.reconcile_app_plane()
 

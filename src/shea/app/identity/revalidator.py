@@ -27,7 +27,7 @@ class IdentityRevalidator:
         if resolved.kind is IdentityKind.PATH:
             return self._verify_path(resolved, assurance, phase)
 
-        if resolved.kind in (IdentityKind.HOST, IdentityKind.URL, IdentityKind.OPAQUE):
+        if resolved.kind in (IdentityKind.HOST, IdentityKind.URL, IdentityKind.APPLICATION, IdentityKind.OPAQUE):
             return VerifiedIdentity(
                 identity=resolved,
                 assurance=assurance,

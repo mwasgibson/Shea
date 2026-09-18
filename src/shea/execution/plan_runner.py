@@ -7,6 +7,7 @@ from shea.contracts.models import Plan, PlanStep, Task, ToolRequest
 from shea.decision.service import DecisionService
 from shea.execution.service import ExecutionOutcomeRecord, ExecutionService
 from shea.ports.repositories import PlanRepository
+from shea.profiles.snapshot import ProfileSnapshot
 from shea.security.service import SecurityService
 from shea.tools.registry import ToolRegistry
 from shea.verification.service import VerificationService
@@ -26,6 +27,50 @@ class PlanRunResult:
     completed_steps: int
     stopped_early: bool
 
+
+
+def sort_steps_topologically(steps: list[PlanStep]) -> list[PlanStep]:
+    step_dict: dict[str, PlanStep] = {s.id: s for s in steps}
+    
+    # dependencies: map step_id -> set of prerequisite step_ids
+    # We only care about dependencies that are actually executable (have a tool)
+    executable_ids: set[str] = set(step_dict.keys())
+    
+    dependencies: dict[str, set[str]] = {}
+    for s in steps:
+        deps: set[str] = set()
+        for dep in getattr(s, "depends_on", []):
+            if isinstance(dep, str) and dep in executable_ids:
+                deps.add(dep)
+        dependencies[s.id] = deps
+
+    ordered_step_ids: list[str] = []
+    
+    while dependencies:
+        # Find all steps that have no unmet prerequisites
+        ready_ids: list[str] = [sid for sid, d in dependencies.items() if not d]
+        
+        if not ready_ids:
+            # We have steps left, but none are ready. Graph has a cycle.
+            raise ValueError("Plan step dependencies contain a cycle or unresolved edge")
+            
+        # Tie-break deterministic execution by fallback `order` field
+        def _get_order(sid: str) -> int:
+            return step_dict[sid].order
+            
+        ready_ids.sort(key=_get_order)
+        
+        # We can theoretically execute all ready_ids in parallel.
+        # But this PlanRunner processes them sequentially. We will just pick the first one
+        # or we could append all of them. Since we process sequentially, let's just 
+        # add all of them into the queue.
+        for ready_id in ready_ids:
+            ordered_step_ids.append(ready_id)
+            del dependencies[ready_id]
+            for deps_set in dependencies.values():
+                deps_set.discard(ready_id)
+                
+    return [step_dict[sid] for sid in ordered_step_ids]
 
 class PlanRunner:
     """Execute a plan step-by-step with per-step authorization binding.
@@ -77,10 +122,8 @@ class PlanRunner:
         if plan is None:
             raise ValueError(f"Task {task.id!r} has no persisted plan")
 
-        steps = sorted(
-            (s for s in plan.steps if s.tool),
-            key=lambda s: s.order,
-        )
+        executable_steps = [s for s in plan.steps if s.tool]
+        steps = sort_steps_topologically(executable_steps)
         if not steps:
             raise ValueError(f"Plan for task {task.id!r} has no executable steps")
 
@@ -116,6 +159,8 @@ class PlanRunner:
                 self._set_step_state(plan, step, STEP_RUNNING)
 
                 capabilities = self._tools.get_declaration(step.tool).capabilities
+                snapshot_params = {"_profile_snapshot": current.profile_snapshot} if current.profile_snapshot else {}
+                snapshot = ProfileSnapshot.from_parameters(snapshot_params)
                 decision_outcome = self._decision.evaluate_and_authorize(
                     current,
                     capabilities=capabilities,
@@ -124,6 +169,7 @@ class PlanRunner:
                     arguments=dict(step.arguments),
                     acting_user=acting_user,
                     explicit_user_ack=explicit_user_ack,
+                    profile_id=snapshot.profile_id,
                 )
                 current = decision_outcome.task
 

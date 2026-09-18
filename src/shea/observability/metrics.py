@@ -5,8 +5,7 @@ import os
 import shutil
 import threading
 import time
-from dataclasses import dataclass, field
-
+from dataclasses import dataclass
 
 MetricEvent = dict[str, str | float]
 

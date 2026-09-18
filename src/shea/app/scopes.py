@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 class EnforcementStatus(Enum):
@@ -22,6 +22,37 @@ class FilesystemScope:
 class NetworkScope:
     allowed_hosts: frozenset[str] | None = None  # None = no network by default for process
     block_private: bool = True
+    # SPKI pin: SHA-256 of the peer cert SPKI, base64 or hex (lowercase).
+    # Empty = no pin (still require normal TLS verify).
+    pinned_spki_sha256: frozenset[str] = frozenset()
+    # Proxy: None = direct only; set only when allow_proxy is True.
+    allow_proxy: bool = False
+    proxy_url: str | None = None
+    # Per-destination credential refs: hostname -> credential id (never secret).
+    destination_credentials: dict[str, str] = field(default_factory=dict[str, str])
+
+
+class BrowserProfileMode(StrEnum):
+    EPHEMERAL_ISOLATED = "EPHEMERAL_ISOLATED"
+    PERSISTENT_SHEA_PROFILE = "PERSISTENT_SHEA_PROFILE"
+    USER_APPROVED_EXISTING_PROFILE = "USER_APPROVED_EXISTING_PROFILE"
+    ATTACH_EXISTING_SESSION = "ATTACH_EXISTING_SESSION"
+
+
+@dataclass(frozen=True)
+class BrowserScope:
+    """Browser security boundary — cookies/storage/profile isolation."""
+
+    profile_mode: BrowserProfileMode = BrowserProfileMode.EPHEMERAL_ISOLATED
+    """Default EPHEMERAL: no durable cookies; fresh context per invoke."""
+    allowed_profile_dirs: frozenset[str] = frozenset()
+    """Only used for PERSISTENT_SHEA_PROFILE / USER_APPROVED paths."""
+    allow_downloads: bool = False
+    allow_uploads: bool = False
+    allow_attach_cdp: bool = False
+    """ATTACH_EXISTING_SESSION requires this True + explicit CDP endpoint."""
+    content_trust: str = "DATA"
+    """Always DATA — page content never becomes AUTHORITY."""
 
 
 @dataclass(frozen=True)
@@ -44,7 +75,29 @@ class ResourceLimits:
 class IsolationPolicy:
     require_new_session: bool = False
     require_cgroup: bool = False  # V1: report UNSUPPORTED if required
-    
+
+
+@dataclass(frozen=True)
+class IsolationLimits:
+    require_new_session: bool = False
+    memory_bytes: int | None = None
+    cpu_seconds: int = 30
+    max_open_files: int = 256
+    max_processes: int = 64
+    forbid_core_dumps: bool = True
+
+
+def to_port_isolation(scope: ExecutionScope) -> IsolationLimits:
+    iso = scope.isolation
+    res = scope.resources
+    return IsolationLimits(
+        require_new_session=bool(iso.require_new_session),
+        memory_bytes=res.memory_bytes,
+        cpu_seconds=int(res.wall_time_ms / 1000) if res.wall_time_ms else 30,
+        max_open_files=getattr(res, "max_open_files", 256),
+        max_processes=getattr(res, "max_processes", 64),
+        forbid_core_dumps=True,
+    )
 
 @dataclass(frozen=True)
 class ApplicationScope:
@@ -73,6 +126,7 @@ class ExecutionScope:
     network: NetworkScope = field(default_factory=NetworkScope)
     process: ProcessScope = field(default_factory=ProcessScope)
     application: ApplicationScope = field(default_factory=ApplicationScope)
+    browser: BrowserScope = field(default_factory=BrowserScope)
     resources: ResourceLimits = field(default_factory=ResourceLimits)
     isolation: IsolationPolicy = field(default_factory=IsolationPolicy)
 
@@ -88,5 +142,6 @@ class ScopeEnforcementReport:
     process: dict[str, EnforcementStatus] = field(default_factory=dict[str, EnforcementStatus])
     network: dict[str, EnforcementStatus] = field(default_factory=dict[str, EnforcementStatus])
     application: dict[str, EnforcementStatus] = field(default_factory=dict[str, EnforcementStatus])
+    browser: dict[str, EnforcementStatus] = field(default_factory=dict[str, EnforcementStatus])
     acceptable: bool = True
     detail: str = ""

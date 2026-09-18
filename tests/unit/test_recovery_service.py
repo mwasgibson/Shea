@@ -8,15 +8,17 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Task
 from shea.core.orchestrator import Orchestrator
+from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
+from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAttemptRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.persistence.sqlite.verification_repository import SqliteVerificationRepository
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
+from shea.recovery.authority import RecoveryAuthorityError
 from shea.recovery.retry import RetryController, RetryPolicy
 from shea.recovery.service import (
-    RecoveryExhaustedError,
     RecoveryService,
     TaskNotFailedError,
     TaskNotRecoveringError,
@@ -84,10 +86,10 @@ def test_recovery_exhausted_raises(
         recovering = recovery_service.begin_recovery(current_task)
         current_task = recovery_service.resolve_recovery(recovering)
 
-    with pytest.raises(RecoveryExhaustedError) as exc_info:
+    with pytest.raises(RecoveryAuthorityError) as exc_info:
         recovery_service.begin_recovery(current_task)
 
-    assert exc_info.value.attempts_made == 3
+    assert "attempt budget exhausted" in str(exc_info.value)
 
 
 def test_recovery_exhausted_leaves_task_in_failed(
@@ -99,7 +101,7 @@ def test_recovery_exhausted_leaves_task_in_failed(
         recovering = recovery_service.begin_recovery(current_task)
         current_task = recovery_service.resolve_recovery(recovering)
 
-    with pytest.raises(RecoveryExhaustedError):
+    with pytest.raises(RecoveryAuthorityError):
         recovery_service.begin_recovery(current_task)
 
     unchanged = orchestrator.get_task(failed_task.id)
@@ -166,6 +168,9 @@ def test_begin_recovery_honors_custom_retry_controllers_max_attempts(
     recovery_attempt_repository: SqliteRecoveryAttemptRepository,
     tool_execution_repository: SqliteToolExecutionRepository,
     verification_repository: SqliteVerificationRepository,
+    decision_repository: SqliteDecisionRepository,
+    authorization_repository: SqliteAuthorizationRepository,
+    clock: Clock,
     audit_recorder: AuditRecorder,
     id_generator: IdGenerator,
     unit_of_work: SqliteUnitOfWork,
@@ -181,24 +186,30 @@ def test_begin_recovery_honors_custom_retry_controllers_max_attempts(
         recovery_attempt_repository=recovery_attempt_repository,
         tool_execution_repository=tool_execution_repository,
         verification_repository=verification_repository,
+        decision_repository=decision_repository,
+        authorization_repository=authorization_repository,
+        clock=clock,
         audit=audit_recorder,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
         retry_controller=custom_retry,
     )
 
-    custom_service.begin_recovery(failed_task)
+    recovering = custom_service.begin_recovery(failed_task)
+    custom_service.resolve_recovery(recovering)
 
-    with pytest.raises(RecoveryExhaustedError) as exc_info:
+    with pytest.raises(RecoveryAuthorityError) as exc_info:
         custom_service.begin_recovery(failed_task)
 
-    assert exc_info.value.max_attempts == 1
+    assert "attempt budget exhausted" in str(exc_info.value)
 
 
 def test_recovery_service_transaction_rolls_back_on_audit_failure(
     recovery_attempt_repository: SqliteRecoveryAttemptRepository,
     tool_execution_repository: SqliteToolExecutionRepository,
     verification_repository: SqliteVerificationRepository,
+    decision_repository: SqliteDecisionRepository,
+    authorization_repository: SqliteAuthorizationRepository,
     failed_task: Task,
     unit_of_work: SqliteUnitOfWork,
     orchestrator: Orchestrator,
@@ -217,6 +228,9 @@ def test_recovery_service_transaction_rolls_back_on_audit_failure(
         recovery_attempt_repository=recovery_attempt_repository,
         tool_execution_repository=tool_execution_repository,
         verification_repository=verification_repository,
+        decision_repository=decision_repository,
+        authorization_repository=authorization_repository,
+        clock=clock,
         audit=broken_audit,
         id_generator=id_generator,
         unit_of_work=unit_of_work,

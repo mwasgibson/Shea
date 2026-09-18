@@ -247,7 +247,7 @@ exist as code but aren't in the runtime's adapter list.
       the other fixes below, and not wired into the runtime either way.
 - [x] **Still no macOS/Linux/Windows-specific adapters** — `process_local.py`
       remains plain `subprocess`, unchanged.
-- [ ] **`URL`/`APPLICATION` identity kinds still have no test coverage**
+- [x] **`URL`/`APPLICATION` identity kinds still have no test coverage**
       exercising a contract that actually requests them — not re-checked
       this pass, left as previously stated.
 

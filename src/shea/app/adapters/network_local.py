@@ -12,9 +12,16 @@ from shea.app.contracts import (
 )
 from shea.app.enums import AppOutcome
 from shea.app.ports.process import AdapterContext
+from shea.credentials.destination import bind_destination_credential_ref
+from shea.credentials.injection import is_credential_ref, resolve_argument_credentials
+from shea.credentials.ports import CredentialBroker
+from shea.security.content_trust import UntrustedExternalData
+from shea.security.destination import build_identity, canonicalize_url
 from shea.security.exceptions import SecurityViolationError
 from shea.security.network_policy import NetworkPolicy
+from shea.security.proxy_policy import decide_proxy
 from shea.security.runtime_checks import resolve_and_check_url
+from shea.security.tls_pinning import verify_spki_pin
 
 
 class PinnedHTTPSConnection(HTTPSConnection):
@@ -28,8 +35,12 @@ class PinnedHTTPSConnection(HTTPSConnection):
         context: ssl.SSLContext | None = None,
     ) -> None:
         self._resolved_ip = resolved_ip
-        super().__init__(host=resolved_ip, port=port, timeout=timeout, context=context)
-        self.host = sni_hostname
+        ctx = context or ssl.create_default_context()
+        # Fail closed: hostname must match SNI; cert must chain to a trust root.
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        super().__init__(host=resolved_ip, port=port, timeout=timeout, context=ctx)
+        self.host = sni_hostname  # SNI + hostname check target
 
     def connect(self) -> None:
         sni = self.host
@@ -45,8 +56,13 @@ class LocalNetworkAdapter:
 
     name = "network.local"
 
-    def __init__(self, policy: NetworkPolicy | None = None) -> None:
+    def __init__(
+        self,
+        policy: NetworkPolicy | None = None,
+        credential_broker: CredentialBroker | None = None,
+    ) -> None:
         self._default_policy = policy or NetworkPolicy()
+        self._credential_broker = credential_broker
 
     def supports(self, contract: ExecutionContract) -> bool:
         return contract.operation.startswith("network.") or contract.capability in {
@@ -92,6 +108,24 @@ class LocalNetworkAdapter:
                 evidence=self._base(receipt, attempt),
             )
 
+        proxy = decide_proxy(
+            allow_proxy=net.allow_proxy,
+            proxy_url=net.proxy_url,
+            target_url=url,
+            policy=policy,
+            tool="network.local",
+        )
+        if proxy.mode == "proxy":
+            # V1: explicit failure if we cannot tunnel yet — better than silent direct.
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error=(
+                    "proxy mode authorized but HTTP CONNECT tunneling not enabled in V1 "
+                    f"(proxy={proxy.proxy_url!r}); use direct or extend adapter"
+                ),
+                evidence={**self._base(receipt, attempt), "proxy": proxy.proxy_url},
+            )
+
         method = str(contract.arguments.get("method", "GET")).upper()
         if method not in {"GET", "HEAD"}:
             return AdapterResult(
@@ -116,6 +150,15 @@ class LocalNetworkAdapter:
                 error=str(exc),
                 evidence={**self._base(receipt, attempt), "url": url},
             )
+            
+        try:
+            args = bind_destination_credential_ref(
+                dict(contract.arguments),
+                url=url,
+                destination_credentials=dict(net.destination_credentials),
+            )
+        except SecurityViolationError as exc:
+            return AdapterResult(outcome=AppOutcome.FAILURE, error=str(exc), evidence=self._base(receipt, attempt))
 
         parsed = urlparse(url)
         path = parsed.path or "/"
@@ -138,6 +181,7 @@ class LocalNetworkAdapter:
         chain: list[str] = [current_url]
 
         try:
+            identities: list[dict[str, object]] = []
             while True:
                 try:
                     resolved = resolve_and_check_url(
@@ -169,6 +213,21 @@ class LocalNetworkAdapter:
                         sni_hostname=resolved.host,
                         timeout=timeout_s,
                     )
+                    sock = getattr(conn, "sock", None)
+                    if sock is not None and net.pinned_spki_sha256:
+                        ok, observed = verify_spki_pin(sock, net.pinned_spki_sha256)
+                        if not ok:
+                            conn.close()
+                            return AdapterResult(
+                                outcome=AppOutcome.FAILURE,
+                                error=f"SPKI pin mismatch (observed={observed!r})",
+                                evidence={
+                                    **self._base(receipt, attempt),
+                                    "url": current_url,
+                                    "spki_observed": observed,
+                                    "spki_allowed": sorted(net.pinned_spki_sha256),
+                                },
+                            )
                 elif parsed.scheme == "http":
                     conn = HTTPConnection(
                         host=resolved.resolved_ip,
@@ -182,12 +241,41 @@ class LocalNetworkAdapter:
                         evidence={**self._base(receipt, attempt), "url": current_url},
                     )
 
-                headers = {
-                    "Host": resolved.host,
-                    "User-Agent": "shea-network.local/1",
-                }
+                headers = {"Host": resolved.host, "User-Agent": "shea-network.local/1"}
+                auth_arg = args.get("authorization")
+                if is_credential_ref(auth_arg):
+                    if self._credential_broker is None:
+                        return AdapterResult(
+                            outcome=AppOutcome.FAILURE,
+                            error="credential broker required for authorization reference",
+                            evidence=self._base(receipt, attempt),
+                        )
+                    resolved_args = resolve_argument_credentials(
+                        args,
+                        broker=self._credential_broker,
+                        tool="network.local",
+                        profile_id=str(contract.metadata.get("_profile_id", "system")),
+                    )
+                    headers["Authorization"] = f"Bearer {resolved_args['authorization']}"
+                elif isinstance(auth_arg, str):
+                    headers["Authorization"] = f"Bearer {auth_arg}"
                 conn.request(method if hop == 0 else "GET", path, headers=headers)
                 response = conn.getresponse()
+                tls_sock = None
+                sock = getattr(conn, "sock", None)
+                if parsed.scheme == "https" and isinstance(sock, ssl.SSLSocket):
+                    tls_sock = sock
+
+                identity = build_identity(
+                    requested_url=current_url,
+                    hostname=resolved.host,
+                    resolved_ip=resolved.resolved_ip,
+                    port=resolved.port,
+                    scheme=parsed.scheme or "",
+                    redirect_index=hop,
+                    tls_sock=tls_sock,
+                )
+                identities.append(identity.to_evidence())
                 status = response.status
                 location = response.getheader("Location")
                 body = response.read(max_bytes + 1)
@@ -206,6 +294,17 @@ class LocalNetworkAdapter:
                     method = "GET" if status in {301, 302, 303} else method
                     continue
                 break
+        except ssl.SSLError as exc:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,  # never connected under valid identity
+                error=f"TLS identity failure: {exc}",
+                evidence={
+                    **self._base(receipt, attempt),
+                    "url": url,
+                    "redirect_chain": chain,
+                    "tls_failure": str(exc),
+                },
+            )
         except OSError as exc:
             return AdapterResult(
                 outcome=AppOutcome.UNKNOWN,
@@ -216,7 +315,6 @@ class LocalNetworkAdapter:
                     "redirect_chain": chain,
                 },
             )
-
         text = body.decode("utf-8", errors="replace")
         outcome = AppOutcome.SUCCESS if 200 <= status < 300 else AppOutcome.FAILURE
         return AdapterResult(
@@ -225,15 +323,33 @@ class LocalNetworkAdapter:
             evidence={
                 **self._base(receipt, attempt),
                 "url": url,
+                "canonical_url": canonicalize_url(url),
                 "final_url": current_url,
+                "final_canonical_url": canonicalize_url(current_url),
                 "status": status,
+                "outcome": outcome.value,
                 "method": method,
                 "redirect_hops": hop,
                 "redirect_chain": chain,
-                "body_preview": text[:2000],
+                "destination_identity_chain": identities,
+                "tls_verified": all(
+                    hop_id.get("tls_verified")
+                    for hop_id in identities
+                    if hop_id.get("scheme") == "https"
+                )
+                if identities
+                else None,
+                "untrusted_content_block": UntrustedExternalData(
+                    source_url=current_url,
+                    content_type="text/plain", # Default fallback, could parse from headers
+                    payload=text[:2000]
+                ).to_safe_prompt_block(),
+                "_raw_body_preview": text[:2000],
                 "bytes_read": len(body),
                 "truncated": truncated,
                 "postcondition": "response_received",
+                "transport_complete": True,
+                "business_success": None,  # deliberately unset — not this layer's job
             },
         )
 

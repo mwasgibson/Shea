@@ -48,4 +48,3 @@ def configure_tracing(level: int = logging.INFO) -> None:
     
     root_logger.addHandler(handler)
     root_logger.setLevel(level)
-

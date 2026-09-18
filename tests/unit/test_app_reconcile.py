@@ -71,7 +71,7 @@ def test_reconcile_invoked_not_finalized_becomes_unknown(
     result = supervisor.reconcile_receipt(receipt.id)
 
     assert result.outcome is AppOutcome.UNKNOWN
-    assert result.detail == "attempt_invoked_not_finalized"
+    assert result.detail == "default: attempt_invoked_not_finalized; external state unknowable"
     assert result.receipt.state is ReceiptState.FINALIZED
     assert result.attempt is not None
     assert result.attempt.state is AttemptState.FINALIZED

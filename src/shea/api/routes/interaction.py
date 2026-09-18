@@ -21,9 +21,6 @@ def get_runtime(request: Request) -> SheaRuntime:
     return cast(SheaRuntime, request.app.state.runtime)
 
 
-
-
-
 @router.post("/chat", response_model=ChatResponse)
 async def submit_chat(
     payload: ChatRequest,
@@ -38,11 +35,12 @@ async def submit_chat(
     """
     
     def run_pipeline() -> None:
+        profile_id = payload.profile_id or "default"
         # Using interaction_service.handle_text enforces the full cognition pipeline
         runtime.interaction_service.handle_text(
             text=payload.message,
             session_id=payload.session_id or uuid4().hex,
-            actor=payload.profile_id or "default",
+            profile_id=profile_id,
             explicit_user_ack=False, # Wait, for API, do we block on ack? Assuming auto-run or event-based ack for now
         )
         

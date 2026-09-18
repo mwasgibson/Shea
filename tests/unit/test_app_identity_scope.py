@@ -36,14 +36,14 @@ from shea.ports.id_generator import IdGenerator
 from shea.ports.unit_of_work import UnitOfWork
 
 
-def test_resolve_path_canonical(tmp_path: Path):
+def test_resolve_path_canonical(tmp_path: Path) -> None:
     target = RequestedTarget(kind=IdentityKind.PATH, value=str(tmp_path / "a" / "b.txt"))
     resolved = IdentityResolver().resolve(target, IdentityRequirements())
     assert resolved.kind is IdentityKind.PATH
     assert resolved.canonical_value.endswith("b.txt")
 
 
-def test_strict_path_requires_parent(tmp_path: Path):
+def test_strict_path_requires_parent(tmp_path: Path) -> None:
     missing_parent = tmp_path / "nope" / "file.txt"
     resolved = IdentityResolver().resolve(
         RequestedTarget(kind=IdentityKind.PATH, value=str(missing_parent)),
@@ -56,7 +56,7 @@ def test_strict_path_requires_parent(tmp_path: Path):
         )
 
 
-def test_scope_fails_closed_on_required_cgroup():
+def test_scope_fails_closed_on_required_cgroup() -> None:
     scope = ExecutionScope(
         scope_id="s1",
         isolation=IsolationPolicy(require_cgroup=True),
@@ -65,7 +65,7 @@ def test_scope_fails_closed_on_required_cgroup():
         evaluate_scope(scope)
 
 
-def test_scope_fails_closed_on_empty_filesystem_roots_with_filesystem_op():
+def test_scope_fails_closed_on_empty_filesystem_roots_with_filesystem_op() -> None:
     from shea.app.scopes import FilesystemScope
     scope = ExecutionScope(
         scope_id="s-fs",
@@ -82,7 +82,7 @@ def test_scope_fails_closed_on_empty_filesystem_roots_with_filesystem_op():
         evaluate_scope(scope, contract)
 
 
-def test_scope_allows_filesystem_with_non_empty_roots():
+def test_scope_allows_filesystem_with_non_empty_roots() -> None:
     import tempfile
 
     from shea.app.scopes import FilesystemScope
@@ -107,7 +107,7 @@ def test_process_spawn_echo(
     clock: Clock, id_generator: IdGenerator, unit_of_work: UnitOfWork,
     app_receipt_repository: InMemoryReceiptRepository, 
     app_attempt_repository: InMemoryAttemptRepository,
-):
+) -> None:
     scope = ExecutionScope(
         scope_id="s-proc",
         process=ProcessScope(
@@ -140,3 +140,46 @@ def test_process_spawn_echo(
     result = supervisor.execute(contract)
     assert result.adapter_result.outcome is AppOutcome.SUCCESS
     assert "shea-app" in result.adapter_result.evidence.get("stdout", "")
+
+def test_resolve_url_canonical() -> None:
+    target = RequestedTarget(kind=IdentityKind.URL, value="https://example.com/path?query=1")
+    # IdentityRequirements defaults to allowing URL, assuming it allows all or URL is allowed
+    # Wait, IdentityRequirements(allowed_kinds=frozenset({IdentityKind.URL}))
+    resolved = IdentityResolver().resolve(target, IdentityRequirements(allowed_kinds=frozenset({IdentityKind.URL})))
+    assert resolved.kind is IdentityKind.URL
+    assert resolved.canonical_value == "https://example.com/path?query=1"
+
+
+def test_strict_url_revalidator_accepts() -> None:
+    target = RequestedTarget(kind=IdentityKind.URL, value="https://example.com")
+    resolved = IdentityResolver().resolve(
+        target,
+        IdentityRequirements(allowed_kinds=frozenset({IdentityKind.URL}), assurance=IdentityAssurance.STRICT),
+    )
+    verified = IdentityRevalidator().verify(
+        resolved,
+        IdentityRequirements(assurance=IdentityAssurance.STRICT),
+    )
+    assert verified.verified is True
+    assert verified.assurance is IdentityAssurance.STRICT
+
+
+def test_resolve_application_canonical() -> None:
+    target = RequestedTarget(kind=IdentityKind.APPLICATION, value="com.apple.Safari")
+    resolved = IdentityResolver().resolve(target, IdentityRequirements(allowed_kinds=frozenset({IdentityKind.APPLICATION})))
+    assert resolved.kind is IdentityKind.APPLICATION
+    assert resolved.canonical_value == "com.apple.Safari"
+
+
+def test_strict_application_revalidator_accepts() -> None:
+    target = RequestedTarget(kind=IdentityKind.APPLICATION, value="com.apple.Safari")
+    resolved = IdentityResolver().resolve(
+        target,
+        IdentityRequirements(allowed_kinds=frozenset({IdentityKind.APPLICATION}), assurance=IdentityAssurance.STRICT),
+    )
+    verified = IdentityRevalidator().verify(
+        resolved,
+        IdentityRequirements(assurance=IdentityAssurance.STRICT),
+    )
+    assert verified.verified is True
+    assert verified.assurance is IdentityAssurance.STRICT

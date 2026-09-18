@@ -29,4 +29,3 @@ class KeyringSecureStore(SecureStore):
         except PasswordDeleteError:
             # If the password didn't exist, we don't care during deletion
             pass
-

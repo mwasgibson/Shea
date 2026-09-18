@@ -81,6 +81,75 @@ def test_evaluate_verification_fails_missing_postcondition(
     assert "postcondition" in verification.explanation
 
 
+def test_network_transport_requires_complete_verified_evidence(
+    clock: Clock, id_generator: IdGenerator
+) -> None:
+    now = clock.now()
+    adapter_result = AdapterResult(
+        outcome=AppOutcome.SUCCESS,
+        evidence={"postcondition": "response_received", "status": 200},
+    )
+    evidence = evidence_from_adapter(
+        evidence_id=id_generator.new_id(),
+        receipt_id="r1",
+        attempt_id="a1",
+        operation="network.request",
+        result=adapter_result,
+        observed_at=now,
+    )
+
+    verification = evaluate_verification(
+        verification_id=id_generator.new_id(),
+        receipt_id="r1",
+        attempt_id="a1",
+        policy=policy_for_operation("network.request"),
+        adapter_result=adapter_result,
+        evidence=evidence,
+        verified_at=now,
+    )
+
+    assert verification.result is AppOutcome.FAILURE
+    assert "transport not verified" in verification.explanation
+
+
+def test_network_transport_verifies_2xx_without_claiming_business_success(
+    clock: Clock, id_generator: IdGenerator
+) -> None:
+    now = clock.now()
+    adapter_result = AdapterResult(
+        outcome=AppOutcome.SUCCESS,
+        evidence={
+            "postcondition": "response_received",
+            "transport_complete": True,
+            "status": 204,
+            "tls_verified": None,
+            "business_success": None,
+        },
+    )
+    evidence = evidence_from_adapter(
+        evidence_id=id_generator.new_id(),
+        receipt_id="r1",
+        attempt_id="a1",
+        operation="http.fetch",
+        result=adapter_result,
+        observed_at=now,
+    )
+
+    verification = evaluate_verification(
+        verification_id=id_generator.new_id(),
+        receipt_id="r1",
+        attempt_id="a1",
+        policy=policy_for_operation("http.fetch"),
+        adapter_result=adapter_result,
+        evidence=evidence,
+        verified_at=now,
+    )
+
+    assert evidence.kind == "adapter.network"
+    assert verification.result is AppOutcome.SUCCESS
+    assert evidence.payload["business_success"] is None
+
+
 def test_supervisor_attaches_verification_without_repos(
     clock: Clock,
     id_generator: IdGenerator,

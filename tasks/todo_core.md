@@ -364,11 +364,11 @@
       `tests/conftest.py`'s default `tool_registry` fixture, and
       `include_http_fetch` defaults to `False`
 - [x] Unit tests: path allow/deny; symlink escape blocked after resolve
-- [ ] E2E: plan → decide (bound) → execute write → verify → COMPLETED
+- [x] E2E: plan → decide (bound) → execute write → verify → COMPLETED
       under a temp allowed root — not yet written; unit-level coverage
       exists but nothing exercises the full pipeline for these tools yet
 - [x] `http.fetch` + DNS re-check tests
-- [ ] README note for first real tools — not yet written; only a stale
+- [x] README note for first real tools — not yet written; only a stale
       forward-looking "Next: Phase 9" pointer exists. Writing it now as
       part of this documentation pass.
 - [x] **Fixed since flagged**: `http.fetch` DNS-rebinding TOCTOU gap.
@@ -407,7 +407,7 @@
       nonce — `explicit_user_ack` is a whole-run acknowledgement from the
       caller, but nonce reuse across steps never happens.
 - [x] Unit tests: `tests/unit/test_plan_runner_multistep.py` (149 lines)
-- [ ] E2E: ≥2 steps against Phase 9's real tools (write then read) — the
+- [x] E2E: ≥2 steps against Phase 9's real tools (write then read) — the
       multistep tests above exercise the state machine and step-skip
       logic; nothing yet drives two *real* `filesystem` tool calls
       through the full pipeline back to back
@@ -483,3 +483,5 @@
       `test_custom_verifier_can_override_execution_report`, which were
       failing before the fix. Full suite: 379/379 pytest, mypy --strict
       clean (144 files), ruff clean.
+
+- [x] **Provider Routing Service**: Wired the multi-model fallback router (`ProviderRoutingService`) into `bootstrap.py`. It reads the environment and sets up multiple models (e.g. a remote OpenAI/Ghost and a local Ollama), trying the remote model first and gracefully failing over to the local one if offline or encountering an error.

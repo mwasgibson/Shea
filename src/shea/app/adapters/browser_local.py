@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import re
 from html.parser import HTMLParser
 from typing import Any
 
+from shea.app.adapters.browser_profiles import plan_browser_launch
 from shea.app.adapters.network_local import LocalNetworkAdapter
 from shea.app.contracts import (
     AdapterResult,
@@ -66,6 +66,18 @@ class LocalBrowserAdapter:
                 evidence={"receipt_id": receipt.id, "attempt_id": attempt.id},
             )
 
+        browser_scope = raw_ctx.scope.browser
+        plan = plan_browser_launch(browser_scope)
+        if not plan.ephemeral:
+            return AdapterResult(
+                outcome=AppOutcome.FAILURE,
+                error=(
+                    "browser.local supports only EPHEMERAL_ISOLATED profile mode; "
+                    "use browser.engine for persistent profiles"
+                ),
+                evidence=self._base(receipt, attempt),
+            )
+
         op = contract.operation
         if op not in {"browser.navigate", "browser.read"} and not op.startswith(
             "browser."
@@ -98,17 +110,25 @@ class LocalBrowserAdapter:
         if result.outcome is not AppOutcome.SUCCESS:
             return result
 
-        body = str(result.evidence.get("body_preview") or "")
+        body = str(result.evidence.get("_raw_body_preview") or "")
+        identities = result.evidence.get("destination_identity_chain", [])
         title = self._extract_title(body)
-        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body)).strip()[:2000]
+        
+        # Remove _raw_body_preview from result evidence so it isn't forwarded
+        forwarded_evidence = dict(result.evidence)
+        forwarded_evidence.pop("_raw_body_preview", None)
 
         evidence: dict[str, Any] = {
-            **dict(result.evidence),
+            **forwarded_evidence,
             "browser_operation": op,
             "title": title,
-            "text_preview": text,
             "postcondition": "page_fetched",
             "browser_mode": "http_document",  # not full browser engine
+            "destination_identity_chain": identities,
+            "content_trust": browser_scope.content_trust,
+            "business_success": None,
+            "profile_mode": plan.mode.value,
+            "ephemeral": plan.ephemeral,
         }
         return AdapterResult(outcome=AppOutcome.SUCCESS, evidence=evidence)
 
@@ -120,3 +140,9 @@ class LocalBrowserAdapter:
         except Exception:
             return ""
         return parser.title.strip()[:500]
+
+    @staticmethod
+    def _base(
+        receipt: ExecutionReceipt, attempt: ExecutionAttempt
+    ) -> dict[str, str]:
+        return {"receipt_id": receipt.id, "attempt_id": attempt.id}

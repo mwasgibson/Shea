@@ -100,7 +100,7 @@ def test_live_browser_navigate_example_com() -> None:
     assert result.evidence.get("status") == 200
     title = (result.evidence.get("title") or "").lower()
     assert "example" in title or "example" in (
-        result.evidence.get("text_preview") or ""
+        result.evidence.get("untrusted_content_block") or ""
     ).lower()
 
 

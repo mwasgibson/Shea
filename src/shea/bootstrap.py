@@ -47,7 +47,6 @@ from shea.memory.extractor import MemoryExtractor
 from shea.memory.lifecycle.expiration import MemoryLifecycleEnforcer
 from shea.memory.retrieval.ranking import BoundedContextAssembler, HybridMemoryRetriever
 from shea.memory.service import MemoryService
-from shea.model.factory import model_provider_from_env
 from shea.persistence.sqlite.app_attempt_repository import SqliteAppAttemptRepository
 from shea.persistence.sqlite.app_evidence_repository import SqliteAppEvidenceRepository
 from shea.persistence.sqlite.app_idempotency_repository import SqliteAppIdempotencyRepository
@@ -210,7 +209,11 @@ def build_runtime(
         unit_of_work=unit_of_work,
         task_channel=task_channel,
     )
-    provider = model_provider if model_provider is not None else model_provider_from_env()
+    if model_provider is not None:
+        provider = model_provider
+    else:
+        from shea.provider.factory import build_provider_routing_service
+        provider = build_provider_routing_service(audit=audit)
 
     decision_repository = SqliteDecisionRepository(conn, unit_of_work=unit_of_work)
     vault_repo = SqliteVaultRepository(conn, unit_of_work=unit_of_work)
@@ -277,11 +280,22 @@ def build_runtime(
             ]
         )
     if include_ep_network:
-        adapters.append(LocalNetworkAdapter(policy=network_policy))
+        adapters.append(
+            LocalNetworkAdapter(
+                policy=network_policy,
+                credential_broker=credential_broker,
+            )
+        )
         adapters.append(LocalBrowserAdapter())
         if playwright_available():
             adapters.append(PlaywrightBrowserAdapter())
-    adapters.append(ToolExecutorAdapter(tool_executor, permit_authority=permit_authority))
+    adapters.append(
+        ToolExecutorAdapter(
+            tool_executor,
+            permit_authority=permit_authority,
+            credential_broker=credential_broker,
+        )
+    )
 
     receipt_repository = SqliteAppReceiptRepository(conn, unit_of_work=unit_of_work)
     attempt_repository = SqliteAppAttemptRepository(conn, unit_of_work=unit_of_work)
@@ -374,7 +388,7 @@ def build_runtime(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
-        model_provider=cast('ModelProvider', provider),
+        model_provider=provider,
     )
     recovery_service = RecoveryService(
         orchestrator=orchestrator,
@@ -385,6 +399,9 @@ def build_runtime(
         id_generator=id_generator,
         unit_of_work=unit_of_work,
         execution_supervisor=supervisor,
+        decision_repository=decision_repository,
+        authorization_repository=authorization_repository,
+        clock=clock,
     )
     plan_runner = PlanRunner(
         decision_service=decision_service,
@@ -408,14 +425,19 @@ def build_runtime(
         assembler=context_assembler,
         lifecycle=memory_lifecycle,
     )
-    memory_extractor = MemoryExtractor(
-        event_bus=event_bus,
+    from shea.memory.broker import MemoryBroker
+    memory_broker = MemoryBroker(
         memory_service=memory_service,
         clock=clock,
         id_generator=id_generator,
+        model_provider=provider,
+    )
+    memory_extractor = MemoryExtractor(
+        event_bus=event_bus,
+        memory_broker=memory_broker,
         intent_repository=intent_repository,
         tool_execution_repository=tool_execution_repository,
-        model_provider=cast('ModelProvider', provider),
+        model_provider=provider,
     )
 
     interaction_service = InteractionService(

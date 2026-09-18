@@ -44,4 +44,4 @@ def test_startup_reconciles_interrupted_receipt_into_failed_task(
     )
 
     assert service.reconcile_app_receipts() == [task.id]
-    assert orchestrator.get_task(task.id).state is TaskState.FAILED
+    assert orchestrator.get_task(task.id).state is TaskState.BLOCKED

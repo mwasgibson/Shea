@@ -71,4 +71,3 @@ class SqliteVaultRepository(VaultRepository):
     def delete_metadata(self, credential_id: str) -> None:
         with self._uow:
             self._conn.execute("DELETE FROM credentials WHERE id = ?", (credential_id,))
-

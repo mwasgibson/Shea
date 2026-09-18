@@ -127,6 +127,7 @@ class DecisionService:
         plan: Plan | None = None,
         step: PlanStep | None = None,
         arguments: dict[str, Any] | None = None,
+        profile_id: str = "system"
     ) -> DecisionOutcome:
         verdict = self._policy.evaluate(capabilities)
 
@@ -245,6 +246,7 @@ class DecisionService:
         plan: Plan | None = None,
         step: PlanStep | None = None,
         arguments: dict[str, Any] | None = None,
+        profile_id: str = "system"
     ) -> Authorization:
         resolved_plan = plan
         if resolved_plan is None and task.plan_id is not None:
@@ -277,6 +279,7 @@ class DecisionService:
                 task_id=task.id,
                 granted=True,
                 granted_by=granted_by,
+                profile_id=profile_id,  # frozen profile
                 explicit=explicit,
                 plan_hash=plan_hash,
                 step_hash=step_hash,

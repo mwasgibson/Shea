@@ -65,3 +65,23 @@ class ContextWindow:
     system_prompt: str
     memories: list[Memory] = field(default_factory=list[Memory])
     available_tokens: int = 0
+
+class ResolutionOutcome(StrEnum):
+    """How a proposed memory relates to existing memories."""
+
+    DUPLICATE = "DUPLICATE"  # Semantically identical, just bump timestamp
+    UPDATE = "UPDATE"        # Contradicts or supersedes, expire old
+    DISTINCT = "DISTINCT"    # Completely new and independent
+
+
+@dataclass(frozen=True)
+class MemoryProposal:
+    """A proposed memory extracted from an LLM or subsystem before trust analysis."""
+    
+    profile_id: str
+    type: MemoryType
+    content: str
+    source: str               # e.g., 'llm_extraction', 'user_explicit'
+    task_id: str              # Used for strict provenance binding
+    request_id: str | None
+    base_confidence: float = 0.5

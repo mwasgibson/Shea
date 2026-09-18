@@ -78,5 +78,5 @@ def test_ep_network_get_example_com(
     assert result.adapter_result.outcome is AppOutcome.SUCCESS
     assert result.adapter_result.evidence.get("status") == 200
     assert "example" in (
-        result.adapter_result.evidence.get("body_preview") or ""
+        result.adapter_result.evidence.get("untrusted_content_block") or ""
     ).lower()

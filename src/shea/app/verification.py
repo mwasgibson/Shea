@@ -13,6 +13,7 @@ class VerificationPolicy:
     required_evidence_kinds: frozenset[str] = frozenset()
     minimum_strength: EvidenceStrength = EvidenceStrength.DIRECT
     missing_evidence_outcome: AppOutcome = AppOutcome.FAILURE
+    requires_transport_verification: bool = False
     # If adapter says SUCCESS but postcondition fails → FAILURE
     # If adapter says UNKNOWN → stay UNKNOWN unless policy forces FAILURE
     contradiction_behavior: str = "fail"  # fail | unknown
@@ -77,6 +78,13 @@ DEFAULT_POLICIES: dict[str, VerificationPolicy] = {
         policy_id="net.request.v1",
         postconditions=("response_received",),
         required_evidence_kinds=frozenset({"adapter.network"}),
+        requires_transport_verification=True,
+    ),
+    "http.fetch": VerificationPolicy(
+        policy_id="http.fetch.v1",
+        postconditions=("response_received",),
+        required_evidence_kinds=frozenset({"adapter.network"}),
+        requires_transport_verification=True,
     ),
     "application.launch": VerificationPolicy(
         policy_id="app.launch.v1",

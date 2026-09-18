@@ -31,6 +31,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     run_p.add_argument("--session", default="cli")
 
+    chat_p = sub.add_parser("chat", help="Start interactive chat session")
+    chat_p.add_argument("--session", default="cli-chat")
+
+    update_p = sub.add_parser("update", help="Update the system securely")
+    update_p.add_argument("--channel", default="stable", help="Update channel")
+
     args = parser.parse_args(argv)
     Path(args.workspace).mkdir(parents=True, exist_ok=True)
 
@@ -42,6 +48,71 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command is None or args.command == "boot":
         print("shea ready; app-plane reconcile done")
+        return
+
+    if args.command == "update":
+        from shea.system.updater import UpdateService
+        # The update service operates from the root project directory in this setup
+        updater = UpdateService(Path("."))
+        print(f"Checking for updates on channel {args.channel}...")
+        manifest = updater.check_for_updates("0.1.0", channel=args.channel)
+        if not manifest:
+            print("System is up to date.")
+            return
+            
+        print(f"Update found: {manifest.version}")
+        print("Changelog:")
+        print(manifest.changelog)
+        
+        reply = input("Apply update now? [y/N] ")
+        if reply.lower() == "y":
+            success = updater.apply_update(manifest.version)
+            if success:
+                print("Update applied successfully. Please restart SHEA.")
+            else:
+                print("Update failed and was rolled back securely.")
+        else:
+            print("Update cancelled.")
+        return
+
+    if args.command == "chat":
+        print("Shea Interactive Chat. Type \"exit\" or \"quit\" to stop.")
+        while True:
+            try:
+                text = input("> ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+                
+            if text.strip().lower() in ("exit", "quit"):
+                break
+                
+            if not text.strip():
+                continue
+                
+            result = app.chat(
+                text,
+                session_id=args.session,
+                explicit_user_ack=True,
+                run=True,
+            )
+            
+            if result.error:
+                print(f"Error: {result.error}", file=sys.stderr)
+                continue
+
+            if result.run is not None:
+                for step_result in result.run.step_results:
+                    data = step_result.response.data
+                    if isinstance(data, dict):
+                        typed_data = cast(dict[str, object], data)
+                        content = typed_data.get("content")
+                        if isinstance(content, str) and content.strip():
+                            print(content)
+                    if step_result.response.error:
+                        print(f"Step Error: {step_result.response.error}", file=sys.stderr)
+            else:
+                print("No execution occurred.")
         return
 
     if args.command == "run":

@@ -66,6 +66,12 @@ class ConfigResolver:
     def set_layer_value(self, layer: ConfigLayer, key: str, value: Any) -> None:
         self.layers.setdefault(layer, {})[key] = value
 def build_default_resolver() -> ConfigResolver:
+    import logging
+
+    from shea.config.schema import validate_config
+    from shea.config.trust import ProjectTrustManager
+    
+    logger = logging.getLogger(__name__)
     resolver = ConfigResolver()
     
     # Machine layer (e.g., /etc/shea/config.json)
@@ -73,18 +79,35 @@ def build_default_resolver() -> ConfigResolver:
     if machine_path.is_file():
         try:
             with open(machine_path) as f:
-                resolver.layers[ConfigLayer.MACHINE] = json.load(f)
-        except Exception:
-            pass
+                resolver.layers[ConfigLayer.MACHINE] = validate_config(json.load(f))
+        except Exception as e:
+            logger.warning("Failed to load machine config: %s", e)
             
     # User layer (e.g., ~/.shea/config.json)
     user_path = Path.home() / ".shea" / "config.json"
     if user_path.is_file():
         try:
             with open(user_path) as f:
-                resolver.layers[ConfigLayer.USER] = json.load(f)
-        except Exception:
-            pass
+                resolver.layers[ConfigLayer.USER] = validate_config(json.load(f))
+        except Exception as e:
+            logger.warning("Failed to load user config: %s", e)
+
+    # Project layer (cwd / .shea/config.json)
+    project_path = Path.cwd() / ".shea" / "config.json"
+    if project_path.is_file():
+        trust_manager = ProjectTrustManager()
+        if trust_manager.is_trusted(Path.cwd()):
+            try:
+                with open(project_path) as f:
+                    resolver.layers[ConfigLayer.PROJECT] = validate_config(json.load(f))
+            except Exception as e:
+                logger.warning("Failed to load project config: %s", e)
+        else:
+            logger.warning(
+                "Skipping project config %s because the project is not trusted. "
+                "Add it to ~/.shea/trusted_projects.json to enable it.",
+                project_path
+            )
             
     # Environment layer
     env_config = {}
@@ -92,6 +115,6 @@ def build_default_resolver() -> ConfigResolver:
         if k.startswith("SHEA_"):
             env_config[k] = v
     if env_config:
-        resolver.layers[ConfigLayer.SESSION] = env_config
+        resolver.layers[ConfigLayer.SESSION] = env_config  # Env vars are always strings, let them pass loosely
         
     return resolver

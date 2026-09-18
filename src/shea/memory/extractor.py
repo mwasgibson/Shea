@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import replace
 from typing import Any
 
 from shea.events.bus import EventBus
 from shea.events.contracts import Event
-from shea.memory.contracts import Memory, MemoryStatus, MemoryType, Sensitivity
-from shea.memory.service import MemoryService
-from shea.ports.clock import Clock
-from shea.ports.id_generator import IdGenerator
+from shea.memory.broker import MemoryBroker
+from shea.memory.contracts import MemoryProposal, MemoryType
 from shea.ports.model_provider import ModelProvider
 from shea.ports.repositories import IntentRepository, ToolExecutionRepository
 
@@ -23,17 +20,13 @@ class MemoryExtractor:
     def __init__(
         self,
         event_bus: EventBus,
-        memory_service: MemoryService,
-        clock: Clock,
-        id_generator: IdGenerator,
+        memory_broker: MemoryBroker,
         intent_repository: IntentRepository,
         tool_execution_repository: ToolExecutionRepository,
         model_provider: ModelProvider,
     ) -> None:
         self._bus = event_bus
-        self._memory_service = memory_service
-        self._clock = clock
-        self._ids = id_generator
+        self._broker = memory_broker
         self._intent_repo = intent_repository
         self._tool_repo = tool_execution_repository
         self._model = model_provider
@@ -110,65 +103,13 @@ If there is nothing persistent to remember, return {{"memories": []}}.
             except ValueError:
                 mem_type = MemoryType.FACT
                 
-            self._process_extracted_memory(content, mem_type, profile_id, task_id, request_id)
-
-    def _process_extracted_memory(self, content: str, mem_type: MemoryType, profile_id: str, task_id: str, request_id: str | None) -> None:
-        # Search for semantically similar memories to detect duplicates or conflicts
-        similar_results = self._memory_service.retrieve(content, profile_id=profile_id, limit=3)
-        
-        # Only care about highly similar memories
-        candidates = [r.memory for r in similar_results if r.score > 0.8]
-        
-        for old_mem in candidates:
-            if old_mem.type != mem_type:
-                continue
-                
-            # Ask LLM if they conflict or duplicate
-            conflict_prompt = f"""Given the old memory and the new extracted memory, determine the relationship.
-Old Memory: {old_mem.content}
-New Memory: {content}
-
-Return a JSON object with a single key "resolution" that is one of:
-- "DUPLICATE": The new memory is semantically identical to the old one.
-- "UPDATE": The new memory contradicts or supersedes the old memory (e.g. preference changed).
-- "DISTINCT": They are different and both should be kept.
-"""
-            resp = self._model.generate(conflict_prompt)
-            resolution = "DISTINCT"
-            
-            if resp.structured_data:
-                resolution = resp.structured_data.get("resolution", "DISTINCT")
-            else:
-                if "DUPLICATE" in resp.content.upper():
-                    resolution = "DUPLICATE"
-                elif "UPDATE" in resp.content.upper():
-                    resolution = "UPDATE"
-                    
-            if resolution == "DUPLICATE":
-                logger.info(f"Memory '{content}' is a duplicate of {old_mem.id}. Bumping timestamp.")
-                updated_mem = replace(old_mem, updated_at=self._clock.now())
-                self._memory_service.store(updated_mem)
-                return
-                
-            elif resolution == "UPDATE":
-                logger.info(f"Memory '{content}' updates {old_mem.id}. Expiring old memory.")
-                expired_mem = replace(old_mem, status=MemoryStatus.EXPIRED, updated_at=self._clock.now())
-                self._memory_service.store(expired_mem)
-                # Keep going to insert the new memory below
-                break
-                
-        # If we got here, it's either DISTINCT or an UPDATE of an old one. Store new memory.
-        new_memory = Memory(
-            id=self._ids.new_id(),
-            profile_id=profile_id,
-            type=mem_type,
-            content=content,
-            source="llm_extraction",
-            provenance=request_id or task_id,
-            created_at=self._clock.now(),
-            confidence=0.9,
-            sensitivity=Sensitivity.INTERNAL,
-            status=MemoryStatus.ACTIVE
-        )
-        self._memory_service.store(new_memory)
-        logger.info(f"Stored new memory {new_memory.id}: '{content}'")
+            proposal = MemoryProposal(
+                profile_id=profile_id,
+                type=mem_type,
+                content=content,
+                source="llm_extraction",
+                task_id=task_id,
+                request_id=request_id,
+                base_confidence=0.8
+            )
+            self._broker.propose(proposal)

@@ -8,6 +8,15 @@ version = "0.1.0"
 description = "SHEA — user-sovereign, modular AI agent runtime (Phase 1-8: core hardening)"
 requires-python = ">=3.11"
 readme = "README.md"
+dependencies = [
+    "cryptography>=42.0",
+    "keyring>=24.0.0",
+    "fastapi",
+    "uvicorn",
+    "pywebview",
+    "click",
+    "sse-starlette",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -45,3 +54,5 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 ignore = ["E501"]
 select = ["E", "F", "I", "UP", "B"]
+[project.scripts]
+shea = "shea.__main__:main"

@@ -57,8 +57,12 @@ TRANSITIONS: dict[TaskState, dict[str, TaskState]] = {
         "retry": TaskState.RECOVERING,
     },
     TaskState.RECOVERING: {
-        "recovered": TaskState.READY,
+        "recovered": TaskState.STABILIZING,
         "recovery_failed": TaskState.FAILED,
+    },
+    TaskState.STABILIZING: {
+        "stabilized": TaskState.READY,
+        "destabilized": TaskState.FAILED,
     },
     TaskState.BLOCKED: {
         "unblock": TaskState.READY,

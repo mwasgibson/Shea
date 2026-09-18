@@ -27,9 +27,12 @@ def evidence_from_adapter(
 ) -> EvidenceRecord:
     kind = "adapter.filesystem" if operation.startswith("filesystem.") else (
         "adapter.process" if operation.startswith("process.") else "adapter.network"
-        if operation.startswith("network.") else "adapter.application" if 
-        operation.startswith("application.") else "adapter.browse" if 
-        operation.startswith(".browse") else "adapter.generic"
+        if operation.startswith("network.") or operation == "http.fetch"
+        else "adapter.application"
+        if operation.startswith("application.")
+        else "adapter.browse"
+        if operation.startswith("browser.")
+        else "adapter.generic"
     )
     payload: dict[str,Any] = {
         "outcome": result.outcome.value,
@@ -85,6 +88,25 @@ def evaluate_verification(
     if strength_order[evidence.strength] < strength_order[policy.minimum_strength]:
         outcome = policy.missing_evidence_outcome
         explanation_parts.append("evidence strength below policy minimum")
+
+    if policy.requires_transport_verification:
+        transport_complete = evidence.payload.get("transport_complete")
+        status = evidence.payload.get("status")
+        tls_verified = evidence.payload.get("tls_verified")
+        transport_verified = (
+            transport_complete is True
+            and isinstance(status, int)
+            and not isinstance(status, bool)
+            and 200 <= status < 300
+            and tls_verified is not False
+        )
+        if not transport_verified:
+            outcome = (
+                AppOutcome.UNKNOWN
+                if adapter_result.outcome is AppOutcome.UNKNOWN
+                else policy.missing_evidence_outcome
+            )
+            explanation_parts.append("transport not verified")
 
     post = evidence.payload.get("postcondition")
     for required in policy.postconditions:

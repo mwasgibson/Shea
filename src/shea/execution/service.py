@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from shea.app.adapters.tool_executor import ToolExecutorAdapter
 from shea.app.contracts import ExecutionContract
@@ -23,7 +23,6 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
-from shea.credentials import CredentialReference
 from shea.credentials.ports import CredentialBroker
 from shea.execution.permit import ExecutionPermitAuthority
 from shea.observability.metrics import global_metrics
@@ -200,7 +199,11 @@ class ExecutionService:
         self._credential_broker = credential_broker
         self._permit_authority = permit_authority or ExecutionPermitAuthority()
         self._execution_supervisor.ensure_adapter(
-            ToolExecutorAdapter(tool_executor, permit_authority=permit_authority)
+            ToolExecutorAdapter(
+                tool_executor, 
+                permit_authority=permit_authority,
+                credential_broker=credential_broker,
+                )
         )
         
     @staticmethod
@@ -291,35 +294,18 @@ class ExecutionService:
             )
             raise
 
-        # Just-in-time Credential Resolution
-        # If the arguments contain a credential reference 
-        # (e.g., {"api_key": {"__credential_ref__": "my_token"}}),
-        # we resolve it into the raw secret so the tool actually receives it.
-        resolved_arguments = dict(request.arguments)
-        if self._credential_broker:
-            for key, value in resolved_arguments.items():
-                if isinstance(value, dict) and "__credential_ref__" in value:
-                    ref_id = cast(
-                        str,
-                        value["__credential_ref__"]
-                    )
-                    # Construct a reference; real payloads may include more metadata.
-                    ref = CredentialReference(id=ref_id, name=ref_id, description=None)
-                    
-                    profile_id = "system"
-                    if self._intent_repo:
-                        intent = self._intent_repo.get_by_task(task.id)
-                        if intent:
-                            profile_id = intent.parameters.get("profile_id", "system")
-                            
-                    scoped_cred = self._credential_broker.resolve(ref, request.tool, profile_id)
-                    resolved_arguments[key] = scoped_cred.secret_value
+        # Profile is frozen into the task for credential binding.
+        # Secrets are NOT resolved here — only CredentialReference markers
+        # travel on the contract. Broker injects at adapter invoke.
+        profile_id = "system"
+        if task.profile_snapshot and "profile_id" in task.profile_snapshot:
+            profile_id = task.profile_snapshot["profile_id"]
 
         authorization = self._authorizations.list_by_task(task.id)[-1]
         permit = self._tool_executor.mint_permit(
             tool=request.tool,
             action=request.action,
-            arguments=resolved_arguments,
+            arguments=request.arguments,  # refs only — never secrets
             capabilities=authorized_capabilities,
         )
         permit_dict = {
@@ -340,7 +326,7 @@ class ExecutionService:
             ),
             operation=f"tool.{request.tool}.{request.action}",
             target=request.tool,
-            arguments=resolved_arguments,
+            arguments=dict(request.arguments),  # refs only
             expires_at=authorization.expires_at,
             requested_target=RequestedTarget(
                 kind=IdentityKind.OPAQUE,
@@ -364,10 +350,9 @@ class ExecutionService:
                 "request_id": request.request_id,
                 "task_id": task.id,
                 "tool_context": dict(request.context),
-                "_authorized_capabilities": tuple(
-                    sorted(authorized_capabilities)
-                ),
+                "_authorized_capabilities": tuple(sorted(authorized_capabilities)),
                 "_execution_permit": permit_dict,
+                "_profile_id": profile_id,
                 "idempotency_key": idempotency_key,
             },
         )
@@ -501,13 +486,10 @@ class ExecutionService:
 
         auth = authorizations[-1]
 
-        # Isolation check: Ensure auth belongs to the current profile
+        # Isolation check: Ensure auth belongs to the current profile snapshot bound to the task
         active_profile_id = "system"
-        if self._intent_repo:
-            intent = self._intent_repo.get_by_task(task.id)
-            if intent:
-                active_profile_id = intent.parameters.get("profile_id", "system")
-                
+        if task.profile_snapshot and "profile_id" in task.profile_snapshot:
+            active_profile_id = task.profile_snapshot["profile_id"]
         if auth.profile_id != active_profile_id and auth.profile_id != "system":
             raise AuthorizationAlreadyUsedError(task.id, "Profile mismatch - Security Violation")
 

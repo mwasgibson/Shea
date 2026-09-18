@@ -20,3 +20,5 @@ def get_default_audio_synthesizer() -> AudioSynthesizer:
         return WindowsAudioSynthesizer()
     else:
         return StubAudioSynthesizer()
+
+__all__ = ["get_default_audio_synthesizer"]

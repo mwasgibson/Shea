@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import resource
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +13,8 @@ from shea.app.contracts import (
 from shea.app.enums import AppOutcome
 from shea.app.ports.process import AdapterContext
 from shea.app.scopes import ExecutionScope
+from shea.ports.execution_boundary import IsolationLimits
+from shea.security.isolation import isolation_metadata, make_preexec_fn
 
 
 class LocalProcessAdapter:
@@ -121,35 +121,35 @@ class LocalProcessAdapter:
         else:
             isolation_meta["platform"] = "posix"
 
-            def _preexec() -> None:
-                if want_session:
-                    os.setsid()
-                if scope.resources.wall_time_ms is not None:
-                    cpu_s = max(1, int(scope.resources.wall_time_ms / 1000))
-                    try:
-                        resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s))
-                        isolation_meta["rlimit_attempted"] = True
-                    except (ValueError, OSError):
-                        pass
-                if scope.resources.memory_bytes is not None:
-                    try:
-                        resource.setrlimit(
-                            resource.RLIMIT_AS,
-                            (scope.resources.memory_bytes, scope.resources.memory_bytes),
-                        )
-                        isolation_meta["rlimit_attempted"] = True
-                    except (ValueError, OSError):
-                        pass
-
             if want_session or scope.resources.memory_bytes is not None or (
                 scope.resources.wall_time_ms is not None and want_session
             ):
-                run_kwargs["preexec_fn"] = _preexec
-                isolation_meta["new_session"] = want_session
-                isolation_meta["rlimit_attempted"] = (
-                    scope.resources.memory_bytes is not None
-                    or scope.resources.wall_time_ms is not None
+                proc = scope.process
+                res = scope.resources
+                limits = IsolationLimits(
+                    require_new_session=bool(getattr(proc, "require_new_session", True)
+                        or getattr(scope.isolation, "require_new_session", True)
+                        if hasattr(scope, "isolation") else True),
+                    memory_bytes=getattr(res, "memory_bytes", None) or (512 * 1024 * 1024),
+                    cpu_seconds=(
+                        int(res.wall_time_ms / 1000)
+                        if res.wall_time_ms is not None
+                        else 30
+                    ),
+                    max_open_files=256,
+                    max_processes=64,
+                    forbid_core_dumps=True,
+                    drop_capabilities_best_effort=False,
                 )
+
+                isolation_meta = isolation_metadata(limits)
+                isolation_meta["shell"] = False
+                preexec = make_preexec_fn(limits)
+                if preexec is not None:
+                    run_kwargs["preexec_fn"] = preexec
+                    isolation_meta["preexec_applied"] = True
+                else:
+                    isolation_meta["preexec_applied"] = False
 
         try:
             completed = cast(

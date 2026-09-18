@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     request_id  TEXT NOT NULL,
     state       TEXT NOT NULL,
     plan_id     TEXT,
+    profile_snapshot TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS plan_steps (
     description TEXT NOT NULL,
     tool        TEXT,
     arguments   TEXT NOT NULL DEFAULT '{}',  -- JSON object
+    depends_on  TEXT NOT NULL DEFAULT '[]',  -- JSON array of step ids
     state       TEXT NOT NULL DEFAULT 'PENDING'
 );
 

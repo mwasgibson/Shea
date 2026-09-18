@@ -50,9 +50,9 @@ class SqlitePlanRepository:
                 self._conn.execute(
                     """
                     INSERT INTO plan_steps
-                        (id, plan_id, step_order, description, tool, arguments, state)
+                        (id, plan_id, step_order, description, tool, arguments, state, depends_on)
                     VALUES
-                        (:id, :plan_id, :step_order, :description, :tool, :arguments, :state)
+                        (:id, :plan_id, :step_order, :description, :tool, :arguments, :state, :depends_on)
                     """,
                     {
                         "id": step.id,
@@ -62,6 +62,7 @@ class SqlitePlanRepository:
                         "tool": step.tool,
                         "arguments": json.dumps(step.arguments),
                         "state": step.state,
+                        "depends_on": json.dumps(step.depends_on),
                     },
                 )
 
@@ -86,6 +87,7 @@ class SqlitePlanRepository:
                 tool=row["tool"],
                 arguments=json.loads(row["arguments"]),
                 state=row["state"],
+                depends_on=json.loads(row["depends_on"]) if "depends_on" in row.keys() else [],
             )
             for row in step_rows
         ]

@@ -174,7 +174,8 @@ def test_navigate_success_via_mocked_network() -> None:
         outcome=AppOutcome.SUCCESS,
         evidence={
             "status": 200,
-            "body_preview": "<html><title>Example Domain</title><body>Hi</body></html>",
+            "_raw_body_preview": "<html><title>Example Domain</title><body>Hi</body></html>",
+            "untrusted_content_block": "<UNTRUSTED_DATA>Hi</UNTRUSTED_DATA>",
             "url": "https://example.com/",
             "final_url": "https://example.com/",
             "postcondition": "response_received",
@@ -189,7 +190,7 @@ def test_navigate_success_via_mocked_network() -> None:
     assert result.evidence.get("postcondition") == "page_fetched"
     assert result.evidence.get("browser_mode") == "http_document"
     assert result.evidence.get("title") == "Example Domain"
-    assert "Hi" in (result.evidence.get("text_preview") or "")
+    assert "Hi" in (result.evidence.get("untrusted_content_block") or "")
     network.invoke.assert_called_once()
     net_contract = network.invoke.call_args[0][0]
     assert net_contract.operation == "network.request"

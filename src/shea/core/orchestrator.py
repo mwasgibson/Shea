@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
@@ -59,7 +59,7 @@ class Orchestrator:
         self._uow = unit_of_work
         self._events = task_channel
 
-    def create_task(self, *, session_id: str, request_id: str) -> Task:
+    def create_task(self, *, session_id: str, request_id: str, profile_snapshot: dict[str, Any] | None = None) -> Task:
         now = self._clock.now()
         task = Task(
             id=self._ids.new_id(),
@@ -68,6 +68,7 @@ class Orchestrator:
             state=TaskState.CREATED,
             created_at=now,
             updated_at=now,
+            profile_snapshot=profile_snapshot,
         )
         with self._uow:
             self._tasks.save(task)

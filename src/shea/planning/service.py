@@ -12,6 +12,7 @@ from shea.ports.id_generator import IdGenerator
 from shea.ports.model_provider import ModelProvider
 from shea.ports.repositories import IntentRepository, PlanRepository
 from shea.ports.unit_of_work import UnitOfWork
+from shea.profiles.snapshot import ProfileSnapshot
 from shea.tools.registry import ToolRegistry
 from shea.understanding.deterministic import DeterministicIntentMatcher, IntentDraft
 from shea.understanding.exceptions import AmbiguousIntentError
@@ -141,6 +142,8 @@ class PlanningService:
         request_text: str,
         actor: str = "user",
         source: str = "text",
+        profile_id: str = "system",
+        profile_snapshot: ProfileSnapshot | None = None,
     ) -> PlanningOutcome:
         request = Request(
             request_id=self._ids.new_id(),
@@ -150,13 +153,20 @@ class PlanningService:
             source=source,
             created_at=self._clock.now(),
         )
+        snapshot = profile_snapshot or ProfileSnapshot(
+            profile_id=profile_id,
+            name=profile_id,
+            frozen_at=self._clock.now(),
+        )
         task = self._orchestrator.create_task(
-            session_id=session_id, request_id=request.request_id
+            session_id=session_id, 
+            request_id=request.request_id,
+            profile_snapshot=snapshot.to_parameters().get("_profile_snapshot")
         )
         task = self._orchestrator.advance(task.id, "start_planning")
 
         draft = self._parse_intent(task, request_text, source=source)
-        intent = self._persist_intent(task, draft)
+        intent = self._persist_intent(task, draft, profile_snapshot=snapshot)
         plan = self._build_and_validate_plan(task, intent, draft)
 
         with self._uow:
@@ -216,20 +226,27 @@ class PlanningService:
             self._orchestrator.advance(task.id, "plan_failed")
             raise
 
-    def _persist_intent(self, task: Task, draft: IntentDraft) -> Intent:
-        intent = Intent(
+    def _persist_intent(
+        self,
+        task: Task,
+        draft: IntentDraft,
+        *,
+        profile_snapshot: ProfileSnapshot,
+    ) -> Intent:
+        parameters = dict(draft.parameters)
+        parameters.update(profile_snapshot.to_parameters())
+        return Intent(
             id=self._ids.new_id(),
             task_id=task.id,
             type=draft.type,
             goal=draft.goal,
-            parameters=draft.parameters,
+            parameters=parameters,
             confidence=draft.confidence,
             source=draft.source,
             created_at=self._clock.now(),
         )
         # Intent save and its audit record are wrapped in _uow by the caller
         # (create_and_plan) to be part of the larger transaction
-        return intent
 
     def _build_and_validate_plan(self, task: Task, intent: Intent, draft: IntentDraft) -> Plan:
         blueprints = self._templates.build(intent.type, draft)
