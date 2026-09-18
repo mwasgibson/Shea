@@ -28,6 +28,7 @@ class ScopedCredential:
 class CredentialMetadata:
     """Metadata and access control rules for a stored credential."""
     id: str
+    profile_id: str            # The profile that owns this credential
     name: str
     description: str | None
     allowed_tools: frozenset[str]  # Which tools can request this credential (e.g. 'github.*')

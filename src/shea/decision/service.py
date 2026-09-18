@@ -8,6 +8,7 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import PolicyVerdict
 from shea.contracts.models import Authorization, Decision, Plan, PlanStep, RiskAssessment, Task
 from shea.core.orchestrator import Orchestrator
+from shea.events.channels import DecisionChannel
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import (
@@ -99,7 +100,9 @@ class DecisionService:
         clock: Clock,
         id_generator: IdGenerator,
         unit_of_work: UnitOfWork,
+        channel: DecisionChannel | None = None,
     ) -> None:
+        self._channel = channel
         self._policy = policy_engine
         self._risk = risk_engine
         self._orchestrator = orchestrator

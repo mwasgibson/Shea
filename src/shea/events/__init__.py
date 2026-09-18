@@ -1,5 +1,7 @@
 from .bus import EventBus
 from .channels import (
+    CredentialChannel,
+    DecisionChannel,
     ExecutionChannel,
     ProviderChannel,
     SecurityChannel,
@@ -21,5 +23,7 @@ __all__ = [
     "SecurityChannel",
     "Subscription",
     "TaskChannel",
+    "DecisionChannel",
+    "CredentialChannel",
     "priority_rank",
 ]

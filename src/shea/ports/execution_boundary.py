@@ -26,6 +26,7 @@ class ExecutionScope:
 
     max_runtime_seconds: float | None = None
     redact_secrets: bool = True
+    max_output_bytes: int | None = None
 
 
 class ExecutionBoundary(Protocol):

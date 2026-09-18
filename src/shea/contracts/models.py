@@ -131,6 +131,7 @@ class Authorization:
     task_id: str
     granted: bool
     granted_by: str
+    profile_id: str = "system"
     explicit: bool = True
     # Content binding hashes (SHA-256)
     plan_hash: str | None = None

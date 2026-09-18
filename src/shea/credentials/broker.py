@@ -20,12 +20,22 @@ class SheaCredentialBroker(CredentialBroker):
                 return True
         return False
 
-    def resolve(self, reference: CredentialReference, requesting_tool: str) -> ScopedCredential:
+    def resolve(self, reference: CredentialReference, requesting_tool: str, requesting_profile: str) -> ScopedCredential:
         """Resolves a reference into a secret if the tool is authorized."""
         
         metadata = self._vault.get_metadata(reference.id)
         if metadata is None:
             raise ValueError(f"Credential '{reference.id}' does not exist in the vault.")
+
+        if metadata.profile_id != requesting_profile and metadata.profile_id != "system":
+            raise SecurityViolationError(
+                category="credential_access",
+                tool_name=requesting_tool,
+                reason=(
+                    f"Profile '{requesting_profile}' is not authorized to access "
+                    f"credential '{metadata.name}' owned by '{metadata.profile_id}'."
+                ),
+            )
 
         if not self._is_tool_allowed(requesting_tool, metadata.allowed_tools):
             raise SecurityViolationError(

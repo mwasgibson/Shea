@@ -25,3 +25,10 @@ class AudioSource(Protocol):
     def record_until_silence(self) -> bytes:
         """Records from the input source until a period of silence is detected."""
         ...
+
+class AudioSynthesizer(Protocol):
+    """Converts text to speech (TTS)."""
+    
+    def synthesize(self, text: str) -> None:
+        """Synchronously plays the synthesized audio."""
+        ...

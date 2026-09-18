@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .invariants import DEFAULT_SECURITY_INVARIANT_KEYS
@@ -62,3 +65,33 @@ class ConfigResolver:
 
     def set_layer_value(self, layer: ConfigLayer, key: str, value: Any) -> None:
         self.layers.setdefault(layer, {})[key] = value
+def build_default_resolver() -> ConfigResolver:
+    resolver = ConfigResolver()
+    
+    # Machine layer (e.g., /etc/shea/config.json)
+    machine_path = Path("/etc/shea/config.json")
+    if machine_path.is_file():
+        try:
+            with open(machine_path) as f:
+                resolver.layers[ConfigLayer.MACHINE] = json.load(f)
+        except Exception:
+            pass
+            
+    # User layer (e.g., ~/.shea/config.json)
+    user_path = Path.home() / ".shea" / "config.json"
+    if user_path.is_file():
+        try:
+            with open(user_path) as f:
+                resolver.layers[ConfigLayer.USER] = json.load(f)
+        except Exception:
+            pass
+            
+    # Environment layer
+    env_config = {}
+    for k, v in os.environ.items():
+        if k.startswith("SHEA_"):
+            env_config[k] = v
+    if env_config:
+        resolver.layers[ConfigLayer.SESSION] = env_config
+        
+    return resolver

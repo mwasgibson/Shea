@@ -25,9 +25,10 @@ class SqliteVaultRepository(VaultRepository):
             self._conn.execute(
                 """
                 INSERT INTO credentials (
-                    id, name, description, allowed_tools, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    id, profile_id, name, description, allowed_tools, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
+                    profile_id = excluded.profile_id,
                     name = excluded.name,
                     description = excluded.description,
                     allowed_tools = excluded.allowed_tools,
@@ -35,6 +36,7 @@ class SqliteVaultRepository(VaultRepository):
                 """,
                 (
                     metadata.id,
+                    metadata.profile_id,
                     metadata.name,
                     metadata.description,
                     allowed_tools_json,
@@ -47,6 +49,7 @@ class SqliteVaultRepository(VaultRepository):
         allowed_tools = frozenset(json.loads(row["allowed_tools"]))
         return CredentialMetadata(
             id=row["id"],
+            profile_id=row["profile_id"],
             name=row["name"],
             description=row["description"],
             allowed_tools=allowed_tools,

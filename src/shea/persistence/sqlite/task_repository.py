@@ -60,6 +60,17 @@ class SqliteTaskRepository:
         return [_row_to_task(row) for row in rows]
 
 
+    def list_transient_tasks(self) -> list[Task]:
+        # Stable states: COMPLETED, CANCELLED, SECURITY_HALT (terminal)
+        # and FAILED, BLOCKED (requiring explicit resolution)
+        stable_states = ("COMPLETED", "CANCELLED", "SECURITY_HALT", "FAILED", "BLOCKED")
+        placeholders = ",".join("?" for _ in stable_states)
+        rows = self._conn.execute(
+            f"SELECT * FROM tasks WHERE state NOT IN ({placeholders}) ORDER BY created_at",
+            stable_states,
+        ).fetchall()
+        return [_row_to_task(row) for row in rows]
+
 def _row_to_task(row: sqlite3.Row) -> Task:
     return Task(
         id=row["id"],

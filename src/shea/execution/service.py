@@ -32,6 +32,7 @@ from shea.ports.id_generator import IdGenerator
 from shea.ports.repositories import (
     AuthorizationRepository,
     DecisionRepository,
+    IntentRepository,
     PlanRepository,
     ToolExecutionRepository,
 )
@@ -179,6 +180,7 @@ class ExecutionService:
         security_service: SecurityService,
         unit_of_work: UnitOfWork,
         clock: Clock,
+        intent_repository: IntentRepository | None = None,
         credential_broker: CredentialBroker | None = None,
     ) -> None:
         self._permits = permit_authority
@@ -192,6 +194,7 @@ class ExecutionService:
         self._audit = audit
         self._ids = id_generator
         self._security = security_service
+        self._intent_repo = intent_repository
         self._uow = unit_of_work
         self._clock = clock
         self._credential_broker = credential_broker
@@ -302,7 +305,14 @@ class ExecutionService:
                     )
                     # Construct a reference; real payloads may include more metadata.
                     ref = CredentialReference(id=ref_id, name=ref_id, description=None)
-                    scoped_cred = self._credential_broker.resolve(ref, request.tool)
+                    
+                    profile_id = "system"
+                    if self._intent_repo:
+                        intent = self._intent_repo.get_by_task(task.id)
+                        if intent:
+                            profile_id = intent.parameters.get("profile_id", "system")
+                            
+                    scoped_cred = self._credential_broker.resolve(ref, request.tool, profile_id)
                     resolved_arguments[key] = scoped_cred.secret_value
 
         authorization = self._authorizations.list_by_task(task.id)[-1]
@@ -490,6 +500,16 @@ class ExecutionService:
             raise MissingDecisionError(task.id)
 
         auth = authorizations[-1]
+
+        # Isolation check: Ensure auth belongs to the current profile
+        active_profile_id = "system"
+        if self._intent_repo:
+            intent = self._intent_repo.get_by_task(task.id)
+            if intent:
+                active_profile_id = intent.parameters.get("profile_id", "system")
+                
+        if auth.profile_id != active_profile_id and auth.profile_id != "system":
+            raise AuthorizationAlreadyUsedError(task.id, "Profile mismatch - Security Violation")
 
         # Replay: already consumed
         if auth.used_at is not None:

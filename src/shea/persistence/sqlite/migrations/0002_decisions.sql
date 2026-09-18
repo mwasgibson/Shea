@@ -31,6 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_decisions_task_id ON decisions(task_id);
 CREATE TABLE IF NOT EXISTS authorizations (
     id          TEXT PRIMARY KEY,
     task_id     TEXT NOT NULL REFERENCES tasks(id),
+    profile_id  TEXT NOT NULL DEFAULT 'system',
     granted     INTEGER NOT NULL,
     granted_by  TEXT NOT NULL,
     explicit    INTEGER NOT NULL DEFAULT 1,

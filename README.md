@@ -23,11 +23,7 @@ path/DNS checks. Phase 10 finishes durable multi-step execution via
 `PlanRunner`. On top of that, the tree now includes the **app/execution
 plane** (`shea.app`), **execution permits**, **bootstrap + CLI**, optional
 **model providers**, and **portable browser/network/process/OS adapters**.
-
-Three Phase 8/9 issues were caught by exercising code, not only reading it:
-audit chain genesis/`prev_hash` disagreement, authorization replay never
-raised, and schema `default=` validated but not applied to handlers. Those
-are fixed in tree.
+Phase 11 (Final Completion) delivers **Universal Reconciliation** (sweeping orphaned transient tasks), **Fault Injection** testing, a narrowed **Facade** interface (`SheaApp`), lightweight **GUI**, and strict **Resource Governance** (`max_output_bytes` via `SandboxedExecutionBoundary`).
 
 ## Quick start
 
@@ -37,8 +33,12 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -q
 
+# Run via CLI Facade
 python -m shea --db shea.db --workspace ./workspace run "write a note"
 python -m shea --db shea.db --workspace ./workspace run "read the note"
+
+# Or run the graphical interface (FastAPI + HTML GUI)
+# uvicorn shea.api.routes.interaction:create_router ...
 ```
 
 Demo phrases use deterministic templates (no LLM required).
@@ -130,7 +130,7 @@ python -m shea --db PATH --workspace DIR run "…"
 | `shea.contracts` | Typed, framework-free data shapes: `Request`, `Intent`, `Task`, `Plan`, `PlanStep`, `Decision`, `RiskAssessment`, `Authorization`, `AuditEvent`, `ToolRequest`/`ToolResponse`, `ModelResponse`, `ToolExecutionRecord`, `VerificationRecord`, `RecoveryAttempt`. |
 | `shea.ports` | Abstract interfaces (`TaskRepository`, `PlanRepository`, `IntentRepository`, `DecisionRepository`, `RiskAssessmentRepository`, `AuthorizationRepository`, `ToolExecutionRepository`, `VerificationRepository`, `RecoveryAttemptRepository`, `AuditSink`, `Clock`, `IdGenerator`, `ModelProvider`, `UnitOfWork`) — the hexagonal boundary. Nothing concrete lives here. |
 | `shea.state_machine` | Authoritative transition table (Appendix A, plus `execution_unknown` and `step_verified`) and `next_state()` — the only function allowed to change task state. Illegal transitions raise `IllegalTransitionError`. |
-| `shea.persistence.sqlite` | Concrete adapters implementing the ports above: connection handling, numbered SQL migrations through `0007`, repositories, and `audit_chain.py` (`verify_audit_chain` — walks `audit_events` and reports `content_altered`/`link_broken`/`sequence_gap` breaks). SQLite is the source of truth for task/plan state — not an in-memory cache with SQLite as backup. |
+| `shea.persistence.sqlite` | Concrete adapters implementing the ports above: connection handling, numbered SQL migrations through `0009`, repositories (including `SqliteVaultRepository` and `SqliteMemoryService`), and `audit_chain.py` (`verify_audit_chain` — walks `audit_events` and reports `content_altered`/`link_broken`/`sequence_gap` breaks). SQLite is the source of truth for task/plan state — not an in-memory cache with SQLite as backup. |
 | `shea.config` | The six-layer configuration resolver (System → Machine → User → Profile → Project → Session), with `security_invariant_keys` that can only ever be set at the System layer regardless of what any other layer says. |
 | `shea.core` | The `Orchestrator` — thin coordination of task lifecycle. Creates tasks, advances them via the state machine, attaches plans, persists, and audits every attempt (success *and* rejection). Each state write and its audit event commit or roll back together via a shared `UnitOfWork`, not as two independent commits. |
 | `shea.model` | `ModelProvider` port (`generate()`/`health()`/`capabilities()`) and `ScriptedModelProvider` — a deterministic queued-response double. No real LLM API integration ships here; that's the Provider Routing phase's job. |
@@ -142,10 +142,15 @@ python -m shea --db PATH --workspace DIR run "…"
 | `shea.execution` | `ExecutionService` — looks up authorized capabilities from the persisted `Decision`, verifies authorization content-binding, requires `SecurityService`, enforces idempotency (SUCCESS/UNKNOWN suppress), runs one tool call through the supervised app boundary, persists `ToolExecutionRecord`, and advances by outcome. `PlanRunner` walks durable multi-step plans with per-step binding and resume-safe completion states. |
 | `shea.verification` | `Verifier`/`VerifierRegistry` and `VerificationService` — sole caller of `verified` / `verification_failed` / `step_verified` (intermediate steps return to READY for the next authorization). Execution success does not force verification to agree. |
 | `shea.recovery` | `Compensator` abstraction + `RecoveryService` — bounded Saga-style retry (`FAILED -> RECOVERING -> READY \| FAILED`), counted from persisted attempts, and `resolve_blocked()` for tasks Phase 3's `UNKNOWN` execution outcome routes to `BLOCKED`. `RetryController` is the single source of truth for the attempt budget and supplies the backoff delay persisted on each `RecoveryAttempt`. |
-| `shea.security` | `NetworkPolicy`/`FilesystemPolicy` (SSRF and path-scope protection, pure) plus `runtime_checks.py`'s `realpath_under_roots`/`resolve_and_check_url` (the filesystem/DNS re-checks a pure policy can't do — symlink resolution, live DNS resolution), `SecretRedactor` (pattern-based, recursive), `PromptInjectionDetector` (heuristic), `SecurityGate` (pure pre-execution request scanner), `binding.py` (pure content-hashing for `Authorization` — plan/step/argument hashes, nonce generation), `SecurityService` — the only caller of `Orchestrator.advance(task_id, "security_halt")`; its violation path (violation audit -> task halt -> transition audit) commits or rolls back as one transaction. Also `SandboxedExecutionBoundary` — the real "Sandbox" pipeline stage (timeout + redaction). |
+| `shea.security` | `CredentialBroker`/`CredentialService`, `SqliteVault`, `NetworkPolicy`/`FilesystemPolicy` (SSRF and path-scope protection, pure) plus `runtime_checks.py`'s `realpath_under_roots`/`resolve_and_check_url` (the filesystem/DNS re-checks a pure policy can't do — symlink resolution, live DNS resolution), `SecretRedactor` (pattern-based, recursive), `PromptInjectionDetector` (heuristic), `SecurityGate` (pure pre-execution request scanner), `binding.py` (pure content-hashing for `Authorization` — plan/step/argument hashes, nonce generation), `SecurityService` — the only caller of `Orchestrator.advance(task_id, "security_halt")`; its violation path (violation audit -> task halt -> transition audit) commits or rolls back as one transaction. Also `SandboxedExecutionBoundary` — the real "Sandbox" pipeline stage (timeout + redaction). |
 | `shea.provider` | `ProviderProfile`/`ProviderTrustLevel` (LOCAL/TRUSTED_REMOTE/UNTRUSTED), `HealthTracker` (sliding-window health), `FailureCategory`/`classify_exception()`, `ProviderRouter` (pure eligibility + ranking), `ProviderRoutingService` — structurally satisfies `ModelProvider` itself, so it's a drop-in for `IntentParser`/`PlanningService`. |
 | `shea.audit` | `AuditRecorder` — centralizes event ID / timestamp generation so no call site can emit a malformed audit event; optionally redacts metadata via an injected `Redactor`. `chain.py`'s `hash_audit_event` is the pure SHA-256 hashing function backing the tamper-evident chain (see `shea.persistence.sqlite`'s `verify_audit_chain` for the verification side) — storage-neutral on purpose, so any `AuditSink` implementation could use it. |
 | `shea.adapters` | Production implementations of `Clock` and `IdGenerator` (real time, real UUIDs). Tests use fakes instead — see `tests/conftest.py`. |
+| `shea.understanding.memory` | Memory extraction, context variables, and FTS-backed `SqliteMemoryService` for semantic task ranking. |
+| `shea.audio` | Cross-platform text-to-speech adapters (`macOS`, `Windows`, `Linux`, and `stub`) integrating with the activation pipeline. |
+| `shea.extensions` | Plugin manifest resolution, signature checking, and `RestrictedRuntimeProxy` for safe third-party tool execution. |
+| `shea.observability` | Tracing abstractions and ContextVar-based propagation. Stamping logs/audit chains with `correlation_id` and `profile_id`. |
+| `shea.api` | FastAPI interaction routes, server initialization, and `gui.py` lightweight HTML/JS visual client interface. |
 
 ## Execution plane adapters
 
@@ -155,7 +160,7 @@ python -m shea --db PATH --workspace DIR run "…"
 | `process.local` | No shell; executable allowlist; session/rlimit best-effort |
 | `network.local` | `GET/HEAD`; DNS pin; private block; redirects re-checked |
 | `browser.local` | HTTP document navigate/read; any OS |
-| `browser.engine` | Playwright when package + OS gate pass |
+| `browser.playwright` | Full Chromium/Webkit/Firefox headless execution; opt-in. |
 | `filesystem.local` | EP-native FS when registered |
 | `application.macos` / `.windows` / `.linux` | Platform-gated; ApplicationScope allowlists |
 | `application.stub` | Fail-closed fallback |
@@ -204,7 +209,7 @@ The model does not authorize or execute.
 - Audit hash chain detects mid-chain tampering (tip truncation needs external anchor)
 - Runtime realpath / DNS checks beyond pure string policy
 
-`allow_unsafe_execution=True` is for local dev; production should inject a real `ExecutionBoundary`.
+`allow_unsafe_execution` defaults to `False`. The runtime injects a `SandboxedExecutionBoundary` by default to constrain resource allocation (`max_output_bytes`), time bounding, and data redaction.
 
 ## Tests
 
@@ -213,7 +218,9 @@ pytest -q
 SHEA_LIVE_NETWORK=1 pytest tests/unit/test_app_browser_live.py -q
 ```
 
-Unit + property tests under tests/.
+Unit + property tests under `tests/`.
+
+Includes an intense `test_fault_injection.py` chaos-monkey suite to verify system stability under ungraceful shutdown, LLM timeouts, and SQLite locks, ensuring Universal Reconciliation cleans up stranded state.
 
 ## Layout
 
@@ -234,10 +241,15 @@ src/shea/
 ├── execution/          # ExecutionService, PlanRunner
 ├── verification/       # Verifier registry + VerificationService
 ├── recovery/           # Retry, Idempotency, RecoveryService
-├── security/           # Gate, policies, runtime_checks, binding, SecurityService
+├── security/           # Gate, policies, runtime_checks, binding, SecurityService, Vault
 ├── provider/           # Routing + failover
 ├── audit/              # AuditRecorder + chain hashing
 ├── app/                # execution plane: supervisor, adapters, evidence, reconcile, interaction
+├── api/                # FastAPI router, GUI interface
+├── audio/              # cross-platform TTS adapters
+├── extensions/         # Plugin manifest and RestrictedRuntimeProxy
+├── observability/      # Tracing and contextual correlation
+├── profiles/           # User configuration profiles
 ├── bootstrap.py        # composition root (wires agent + app plane)
 ├── __main__.py         # thin CLI
 └── adapters/            # concrete Clock / IdGenerator
@@ -251,8 +263,7 @@ pyproject.toml
 The V1 composition root registers the built-in filesystem tools and wires
 `PlanningService` with deterministic intent matching and plan templates.
 Model-provider routing remains opt-in: pass a configured `ModelProvider` to
-`build_runtime()` when model fallback is available. The default execution
-boundary is intentionally unsafe for local development; production callers
+`build_runtime()` when model fallback is available. The system is securely locked down by default via `SandboxedExecutionBoundary`, bounding all actions by time and memory. production callers
 must provide a real boundary and configure `SHEA_FILESYSTEM_ROOTS` or pass
 `filesystem_roots` explicitly.
 

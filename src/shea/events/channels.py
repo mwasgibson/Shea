@@ -317,3 +317,61 @@ class ProviderChannel:
             {"attempted_providers": attempted_providers},
             priority=EventPriority.CRITICAL,
         )
+
+class CredentialChannel:
+    def __init__(self, bus: EventBus, clock: Clock, id_generator: IdGenerator) -> None:
+        self._bus = bus
+        self._clock = clock
+        self._ids = id_generator
+
+    def _emit(self, event_type: str, payload: dict[str, Any], priority: EventPriority = EventPriority.NORMAL) -> None:
+        self._bus.publish(
+            Event(
+                event_id=self._ids.new_id(),
+                event_type=event_type,
+                source="credential_service",
+                timestamp=self._clock.now(),
+                payload=payload,
+                priority=priority,
+            )
+        )
+
+    def created(self, credential_id: str, profile_id: str) -> None:
+        self._emit("credential.created", {"credential_id": credential_id, "profile_id": profile_id})
+
+    def rotated(self, credential_id: str) -> None:
+        self._emit("credential.rotated", {"credential_id": credential_id})
+
+    def revoked(self, credential_id: str) -> None:
+        self._emit("credential.revoked", {"credential_id": credential_id})
+
+
+class DecisionChannel:
+    def __init__(self, bus: EventBus, clock: Clock, id_generator: IdGenerator) -> None:
+        self._bus = bus
+        self._clock = clock
+        self._ids = id_generator
+
+    def _emit(self, event_type: str, payload: dict[str, Any], correlation_id: str | None = None, priority: EventPriority = EventPriority.NORMAL) -> None:
+        self._bus.publish(
+            Event(
+                event_id=self._ids.new_id(),
+                event_type=event_type,
+                source="decision_service",
+                timestamp=self._clock.now(),
+                payload=payload,
+                correlation_id=correlation_id,
+                priority=priority,
+            )
+        )
+
+    def made(self, task_id: str, recommendation: str, risk_level: str, requires_auth: bool, request_id: str | None = None) -> None:
+        self._emit("decision.made", {
+            "task_id": task_id, 
+            "recommendation": recommendation, 
+            "risk_level": risk_level, 
+            "requires_authorization": requires_auth
+        }, correlation_id=request_id)
+
+    def authorized(self, task_id: str, granted: bool, request_id: str | None = None) -> None:
+        self._emit("decision.authorized", {"task_id": task_id, "granted": granted}, correlation_id=request_id)

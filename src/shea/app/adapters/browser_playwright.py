@@ -158,8 +158,49 @@ class PlaywrightBrowserAdapter:
                     context = browser.new_context(
                         java_script_enabled=True,
                         accept_downloads=False,
+                        bypass_csp=False,
+                        ignore_https_errors=False,
+                        offline=False,
                     )
                     page = context.new_page()
+                    
+                    # Hardening: Intercept all requests to prevent SSRF from within the page
+                    resolved_cache: dict[str, bool] = {}
+                    
+                    def handle_route(route: Any) -> None:
+                        req_url = route.request.url
+                        
+                        # Data URIs and blob URIs are generally safe from network SSRF
+                        if req_url.startswith("data:") or req_url.startswith("blob:"):
+                            route.continue_()
+                            return
+                            
+                        # Extract just the hostname to cache DNS lookups
+                        try:
+                            from urllib.parse import urlparse
+                            host: str | None = urlparse(str(req_url)).hostname
+                        except Exception:
+                            host = None
+                            
+                        if host and host in resolved_cache:
+                            if resolved_cache[host]:
+                                route.continue_()
+                            else:
+                                route.abort("accessdenied")
+                            return
+                            
+                        try:
+                            resolve_and_check_url(req_url, policy, tool="browser.engine.intercept")
+                            if host:
+                                resolved_cache[host] = True
+                            route.continue_()
+                        except SecurityViolationError:
+                            if host:
+                                resolved_cache[host] = False
+                            route.abort("accessdenied")
+                            
+                    page.route("**/*", handle_route)
+                    
                     page.set_default_timeout(float(timeout_ms))
                     page.goto(url, wait_until="domcontentloaded")
                     final_url = page.url

@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shea.contracts.enums import TaskState
-from shea.contracts.models import Task
+from shea.contracts.models import Plan, Task
 from shea.execution.plan_runner import PlanRunner, PlanRunResult
+from shea.observability.context import active_context
 from shea.planning.service import PlanningOutcome, PlanningService
 
 
@@ -43,10 +44,38 @@ class InteractionService:
         actor: str = "user",
         run: bool = True,
     ) -> InteractionResult:
-        planning = self._planning.create_and_plan(
-            session_id=session_id,
-            request_text=text,
-        )
+        try:
+            planning = self._planning.create_and_plan(
+                session_id=session_id,
+                request_text=text,
+            )
+        except Exception as e:
+            # Phase E Fault Tolerance: Do not crash the entire interaction layer if LLM fails
+            # We construct a synthetic planning failure result
+            import uuid
+            from datetime import UTC, datetime
+
+            from shea.contracts.models import Intent, Task
+            from shea.planning.service import PlanningOutcome
+            
+            # Bare minimum synthetic task just to hold the error state
+            task_id = uuid.uuid4().hex
+            synthetic_task = Task(
+                id=task_id,
+                session_id=session_id,
+                request_id=uuid.uuid4().hex,
+                state=TaskState.FAILED,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC)
+            )
+            synthetic_intent = Intent(id=task_id, task_id=task_id, type="chat", goal=text, source="api", created_at=datetime.now(UTC))
+            return InteractionResult(
+                planning=PlanningOutcome(task=synthetic_task, intent=synthetic_intent, plan=Plan(id=task_id, task_id=task_id, objective=text, steps=[])),
+                run=None,
+                task=synthetic_task,
+                error=f"Critical failure during planning: {e}"
+            )
+
         task = planning.task
         if task.state is not TaskState.READY:
             return InteractionResult(
@@ -58,13 +87,24 @@ class InteractionService:
         if not run:
             return InteractionResult(planning=planning, run=None, task=task)
 
-        result = self._runner.run(
-            task,
-            acting_user=actor,
-            explicit_user_ack=explicit_user_ack,
-        )
-        return InteractionResult(
-            planning=planning,
-            run=result,
-            task=result.task,
-        )
+        try:
+            # Bind observability context before running the plan
+            with active_context(correlation_id=task.request_id, task_id=task.id):
+                result = self._runner.run(
+                    task,
+                    acting_user=actor,
+                    explicit_user_ack=explicit_user_ack,
+                )
+            return InteractionResult(
+                planning=planning,
+                run=result,
+                task=result.task,
+            )
+        except Exception as e:
+            # Catch catastrophic adapter crashes (e.g. C-level segfaults wrapped in RuntimeError)
+            return InteractionResult(
+                planning=planning,
+                run=None,
+                task=task,
+                error=f"Critical failure during execution: {e}"
+            )

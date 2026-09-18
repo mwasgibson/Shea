@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from shea.audio.ports import AudioSynthesizer
 from shea.security.filesystem_policy import FilesystemPolicy
 from shea.security.network_policy import NetworkPolicy
+from shea.tools.builtin.audio import register_audio_tools
 from shea.tools.builtin.filesystem import register_filesystem_tools
 from shea.tools.builtin.http_fetch import register_http_fetch_tool
 from shea.tools.registry import ToolRegistry
@@ -46,3 +48,20 @@ class BuiltinHttpFetchProvider:
         # verifier_registry unused — fetch has no independent verifier yet
         del verifier_registry
         register_http_fetch_tool(registry, self._policy)
+
+
+class BuiltinAudioProvider:
+    """In-tree audio.speak provider."""
+
+    name = "shea.builtin.audio"
+
+    def __init__(self, synthesizer: AudioSynthesizer) -> None:
+        self._synthesizer = synthesizer
+
+    def register(
+        self,
+        registry: ToolRegistry,
+        *,
+        verifier_registry: VerifierRegistry | None = None,
+    ) -> None:
+        register_audio_tools(registry, self._synthesizer)

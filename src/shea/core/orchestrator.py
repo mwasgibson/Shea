@@ -162,3 +162,24 @@ class Orchestrator:
         if self._events is not None:
             self._events.plan_attached(task.id, plan_id, request_id=task.request_id)
         return task
+
+    def cancel_task(self, task_id: str, reason: str = "User cancelled") -> Task:
+        task = self.get_task(task_id)
+        if task.state in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.SECURITY_HALT, TaskState.FAILED, TaskState.BLOCKED):
+            return task
+        
+        old_state = task.state
+        task.state = TaskState.CANCELLED
+        self._tasks.save(task)
+        if self._events is not None:
+            self._events.state_changed(
+                task.id, 
+                old_state, 
+                task.state, 
+                "cancelled",
+                request_id=task.request_id
+            )
+        return task
+
+    def list_transient_tasks(self) -> list[Task]:
+        return self._tasks.list_transient_tasks()

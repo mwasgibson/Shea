@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
+import sys
 from typing import Any, cast
 
 from shea.contracts.models import ToolRequest, ToolResponse
@@ -49,10 +51,30 @@ class SandboxedExecutionBoundary:
         else:
             response = handler(request)
 
+
         if scope.redact_secrets:
             response = self._redact_response(response)
 
+        if scope.max_output_bytes is not None and response.data is not None:
+            size = self._estimate_size(response.data)
+            if size > scope.max_output_bytes:
+                return ToolResponse(
+                    success=False,
+                    error=f"output size {size} bytes exceeds limit of {scope.max_output_bytes} bytes",
+                )
+
         return response
+
+    def _estimate_size(self, data: Any) -> int:
+        if isinstance(data, str):
+            return len(data.encode("utf-8", errors="replace"))
+        if isinstance(data, (bytes, bytearray)):
+            return len(data)
+        try:
+            return len(json.dumps(data).encode("utf-8"))
+        except (TypeError, ValueError):
+            return sys.getsizeof(data)
+
 
     def _redact_response(self, response: ToolResponse) -> ToolResponse:
         redacted_error = (

@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from shea.adapters.system import SystemClock, UuidIdGenerator
 from shea.app.adapters.application_linux import LinuxApplicationAdapter
@@ -26,19 +27,23 @@ from shea.app.recovery import ReconciliationResult
 from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
 from shea.bootstrap_demo import register_demo_intent
+from shea.config.resolver import ConfigResolver
+from shea.contracts.models import Task
 from shea.core.orchestrator import Orchestrator
 from shea.credentials.broker import SheaCredentialBroker
 from shea.credentials.keyring_adapter import KeyringSecureStore
 from shea.credentials.ports import CredentialBroker
+from shea.credentials.service import CredentialService
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
 from shea.events.bus import EventBus
-from shea.events.channels import SecurityChannel, TaskChannel
+from shea.events.channels import CredentialChannel, DecisionChannel, SecurityChannel, TaskChannel
 from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import PlanRunner
 from shea.execution.service import ExecutionService
 from shea.extensions.loader import PluginLoader
+from shea.memory.extractor import MemoryExtractor
 from shea.memory.lifecycle.expiration import MemoryLifecycleEnforcer
 from shea.memory.retrieval.ranking import BoundedContextAssembler, HybridMemoryRetriever
 from shea.memory.service import MemoryService
@@ -75,6 +80,7 @@ from shea.security.filesystem_policy import FilesystemPolicy
 from shea.security.gate import SecurityGate
 from shea.security.injection import PromptInjectionDetector
 from shea.security.network_policy import NetworkPolicy
+from shea.security.sandbox import SandboxedExecutionBoundary
 from shea.security.service import SecurityService
 from shea.tools.builtin.register import register_builtin_tools
 from shea.tools.executor import ToolExecutor
@@ -105,15 +111,26 @@ class SheaRuntime:
     memory_service: MemoryService
     profile_service: ProfileService
     credential_broker: CredentialBroker
+    credential_service: CredentialService
+    memory_extractor: MemoryExtractor
+    config_resolver: ConfigResolver
 
     def reconcile_app_plane(self) -> list[ReconciliationResult]:
         return self.recovery_service.reconcile_app_plane()
 
+    def reconcile_stranded_tasks(self) -> list[Task]:
+        return self.recovery_service.reconcile_stranded_tasks()
 
-def _filesystem_roots(value: Iterable[str] | None) -> frozenset[str]:
+
+
+def _filesystem_roots(value: Iterable[str] | None, config_resolver: ConfigResolver | None = None) -> frozenset[str]:
     if value is not None:
         return frozenset(value)
-    configured = os.environ.get("SHEA_FILESYSTEM_ROOTS")
+    if config_resolver:
+        configured = config_resolver.resolve("SHEA_FILESYSTEM_ROOTS", None)
+    else:
+        configured = os.environ.get("SHEA_FILESYSTEM_ROOTS")
+        
     if configured:
         return frozenset(item for item in configured.split(os.pathsep) if item)
     return frozenset({str(Path.cwd())})
@@ -126,7 +143,8 @@ def build_runtime(
     register_builtins: bool = True,
     filesystem_roots: Iterable[str] | None = None,
     execution_boundary: ExecutionBoundary | None = None,
-    allow_unsafe_execution: bool = True,
+    config_resolver: ConfigResolver | None = None,
+    allow_unsafe_execution: bool = False,
     include_http_fetch: bool = False,
     model_provider: ModelProvider | None = None,
     register_demo_intents: bool = True,
@@ -167,6 +185,14 @@ def build_runtime(
     vault_repo = SqliteVaultRepository(conn, unit_of_work=unit_of_work)
     secure_store = KeyringSecureStore(service_name="shea_agent")
     credential_broker = SheaCredentialBroker(vault=vault_repo, secure_store=secure_store)
+    credential_channel = CredentialChannel(event_bus, clock, id_generator)
+    credential_service = CredentialService(
+        vault=vault_repo,
+        secure_store=secure_store,
+        ids=id_generator,
+        clock=clock,
+        channel=credential_channel,
+    )
     risk_repository = SqliteRiskAssessmentRepository(conn, unit_of_work=unit_of_work)
     authorization_repository = SqliteAuthorizationRepository(conn, unit_of_work=unit_of_work)
     intent_repository = SqliteIntentRepository(conn, unit_of_work=unit_of_work)
@@ -199,6 +225,7 @@ def build_runtime(
         )
         register_demo_intent(matcher, templates, workspace=workspace)
     permit_authority = ExecutionPermitAuthority()
+    execution_boundary = execution_boundary or SandboxedExecutionBoundary()
     tool_executor = ToolExecutor(
         registry,
         boundary=execution_boundary,
@@ -220,10 +247,9 @@ def build_runtime(
         )
     if include_ep_network:
         adapters.append(LocalNetworkAdapter(policy=network_policy))
+        adapters.append(LocalBrowserAdapter())
         if playwright_available():
             adapters.append(PlaywrightBrowserAdapter())
-        else:
-            adapters.append(LocalBrowserAdapter())
     adapters.append(ToolExecutorAdapter(tool_executor, permit_authority=permit_authority))
 
     receipt_repository = SqliteAppReceiptRepository(conn, unit_of_work=unit_of_work)
@@ -253,6 +279,7 @@ def build_runtime(
         unit_of_work=unit_of_work,
     )
 
+    decision_channel = DecisionChannel(event_bus, clock, id_generator)
     decision_service = DecisionService(
         policy_engine=PolicyEngine(),
         risk_engine=RiskEngine(),
@@ -265,6 +292,7 @@ def build_runtime(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
+        channel=decision_channel,
     )
     security_channel = SecurityChannel(event_bus, clock, id_generator)
     security_service = SecurityService(
@@ -315,7 +343,7 @@ def build_runtime(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
-        model_provider=provider,
+        model_provider=cast('ModelProvider', provider),
     )
     recovery_service = RecoveryService(
         orchestrator=orchestrator,
@@ -339,7 +367,7 @@ def build_runtime(
     memory_store = SqliteMemoryRepository(conn, unit_of_work=unit_of_work)
     vector_store = FtsVectorStore(conn, unit_of_work=unit_of_work)
     memory_retriever = HybridMemoryRetriever(vector_store, memory_store)
-    context_assembler = BoundedContextAssembler(clock)
+    context_assembler = BoundedContextAssembler(clock, retriever=memory_retriever)
     memory_lifecycle = MemoryLifecycleEnforcer(conn, clock, unit_of_work=unit_of_work)
     profile_service = ProfileService(conn, unit_of_work=unit_of_work)
     memory_service = MemoryService(
@@ -348,6 +376,15 @@ def build_runtime(
         retriever=memory_retriever,
         assembler=context_assembler,
         lifecycle=memory_lifecycle,
+    )
+    memory_extractor = MemoryExtractor(
+        event_bus=event_bus,
+        memory_service=memory_service,
+        clock=clock,
+        id_generator=id_generator,
+        intent_repository=intent_repository,
+        tool_execution_repository=tool_execution_repository,
+        model_provider=cast('ModelProvider', provider),
     )
 
     interaction_service = InteractionService(
@@ -373,8 +410,12 @@ def build_runtime(
         memory_service=memory_service,
         profile_service=profile_service,
         credential_broker=credential_broker,
+        credential_service=credential_service,
+        memory_extractor=memory_extractor,
+        config_resolver=cast('ConfigResolver', config_resolver),
     )
     runtime.reconcile_app_plane()
+    runtime.reconcile_stranded_tasks()
 
     # Load dynamic extensions/plugins
     plugin_loader = PluginLoader(plugin_dir=f"{workspace}/plugins")

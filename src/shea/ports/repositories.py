@@ -29,6 +29,8 @@ class TaskRepository(Protocol):
 
     def list_by_session(self, session_id: str) -> list[Task]: ...
 
+    def list_transient_tasks(self) -> list[Task]: ...
+
 
 class PlanRepository(Protocol):
     """Persists Plan + PlanStep state."""

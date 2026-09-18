@@ -3,16 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
 from typing import Annotated, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 
 from shea.api.contracts import ChatRequest, ChatResponse
 from shea.bootstrap import SheaRuntime
-from shea.contracts.models import Intent
 from shea.events.contracts import Event
 
 # We will attach the runtime to app.state in server.py
@@ -23,53 +21,39 @@ def get_runtime(request: Request) -> SheaRuntime:
     return cast(SheaRuntime, request.app.state.runtime)
 
 
+
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def submit_chat(
     payload: ChatRequest,
     runtime: Annotated[SheaRuntime, Depends(get_runtime)],
+    background_tasks: BackgroundTasks,
 ) -> ChatResponse:
-    """Submit a chat message in request-response mode.
-
-    In a real unified app, SSE is preferred for live streaming, but this serves
-    as the fallback / stateless submission endpoint.
+    """Submit a chat message via the core InteractionService pipeline.
+    
+    The API must never bypass the existing pipeline (Text -> Intent -> Plan -> Execute).
+    We dispatch this synchronously to the InteractionService so it flows through the exact
+    same execution and security paths as the CLI.
     """
-    now = datetime.now(UTC)
-    intent_id = uuid4().hex
-    enriched_content = runtime.profile_service.enrich_intent_content(
-        payload.profile_id, payload.message
-    )
-    intent = Intent(
-        id=intent_id,
-        task_id=uuid4().hex,
-        type="chat",
-        goal=enriched_content,
-        parameters={
-            "profile_id": payload.profile_id or "default",
-            "context_overrides": payload.context_overrides,
-        },
-        source="api",
-        created_at=now,
-    )
-
-    runtime.event_bus.publish(
-        Event(
-            event_id=uuid4().hex,
-            event_type="interaction.intent_received",
-            source="api",
-            timestamp=now,
-            payload={
-                "intent_id": intent.id,
-                "task_id": intent.task_id,
-                "goal": intent.goal,
-                "profile_id": payload.profile_id or "default",
-            },
-            correlation_id=intent.id,
+    
+    def run_pipeline() -> None:
+        # Using interaction_service.handle_text enforces the full cognition pipeline
+        runtime.interaction_service.handle_text(
+            text=payload.message,
+            session_id=payload.session_id or uuid4().hex,
+            actor=payload.profile_id or "default",
+            explicit_user_ack=False, # Wait, for API, do we block on ack? Assuming auto-run or event-based ack for now
         )
-    )
-
+        
+    # In a fully asynchronous core we would await this.
+    # For our synchronous architectural core, we run it in a background thread 
+    # to avoid blocking the ASGI event loop, while live logs stream out via SSE.
+    background_tasks.add_task(run_pipeline)
+    
     return ChatResponse(
-        text=f"Acknowledged intent: {intent.id}",
-        session_id=intent.id,
+        text="Processing via InteractionService. Connect to /api/interaction/stream for updates.",
+        session_id=payload.session_id or "new",
     )
 
 

@@ -29,10 +29,10 @@ class SqliteAuthorizationRepository:
             self._conn.execute(
                 """
                 INSERT INTO authorizations
-                    (id, task_id, granted, granted_by, explicit,
+                    (id, task_id, profile_id, granted, granted_by, explicit,
                      plan_hash, step_hash, arguments_hash, expires_at, used_at, nonce)
                 VALUES
-                    (:id, :task_id, :granted, :granted_by, :explicit,
+                    (:id, :task_id, :profile_id, :granted, :granted_by, :explicit,
                      :plan_hash, :step_hash, :arguments_hash, :expires_at, :used_at, :nonce)
                 ON CONFLICT(id) DO UPDATE SET
                     granted = :granted,
@@ -48,6 +48,7 @@ class SqliteAuthorizationRepository:
                 {
                     "id": authorization.id,
                     "task_id": authorization.task_id,
+                    "profile_id": authorization.profile_id,
                     "granted": int(authorization.granted),
                     "granted_by": authorization.granted_by,
                     "explicit": int(authorization.explicit),
@@ -67,7 +68,7 @@ class SqliteAuthorizationRepository:
     def list_by_task(self, task_id: str) -> list[Authorization]:
         rows = self._conn.execute(
             """
-            SELECT id, task_id, granted, granted_by, explicit,
+            SELECT id, task_id, profile_id, granted, granted_by, explicit,
                    plan_hash, step_hash, arguments_hash, expires_at, used_at, nonce
             FROM authorizations
             WHERE task_id = ?
@@ -80,6 +81,7 @@ class SqliteAuthorizationRepository:
             Authorization(
                 id=row["id"],
                 task_id=row["task_id"],
+                profile_id=row["profile_id"],
                 granted=bool(row["granted"]),
                 granted_by=row["granted_by"],
                 explicit=bool(row["explicit"]),

@@ -43,7 +43,7 @@ class SecureStore(Protocol):
 class CredentialBroker(Protocol):
     """The authority for dispensing credentials to tools."""
 
-    def resolve(self, reference: CredentialReference, requesting_tool: str) -> ScopedCredential:
+    def resolve(self, reference: CredentialReference, requesting_tool: str, requesting_profile: str) -> ScopedCredential:
         """Resolves a reference into a secret, enforcing access policies.
         
         Raises:

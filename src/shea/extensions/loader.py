@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from shea.bootstrap import SheaRuntime
 from shea.extensions.plugin import SheaPlugin
+from shea.extensions.security import RestrictedRuntimeProxy
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,23 @@ class PluginLoader:
                                 continue
                             
                             plugin_instance = cast(SheaPlugin, attr())
-                            plugin_instance.register(runtime)
+                            
+                            # Manifest enforcement
+                            manifest_path = (path if path.is_dir() else path.parent) / "manifest.json"
+                            manifest_data: dict[str, Any] = {}
+                            if manifest_path.exists():
+                                try:
+                                    with open(manifest_path) as mf:
+                                        manifest_data = cast('dict[str, Any]', json.load(mf))
+                                except Exception as me:
+                                    logger.error(f"Failed to read manifest for {plugin_instance.name}: {me}")
+                            else:
+                                logger.warning(f"Plugin {plugin_instance.name} has no manifest.json! Operating with zero permissions.")
+                                
+                            proxy = RestrictedRuntimeProxy(runtime, plugin_instance.name, manifest_data)
+                            
+                            # We pass the proxy instead of the real runtime!
+                            plugin_instance.register(proxy)  # type: ignore[arg-type]
                             loaded.append(plugin_instance)
                             logger.info(f"Successfully loaded plugin: {plugin_instance.name}")
             except Exception as e:

@@ -338,3 +338,37 @@ class RecoveryService:
                     },
                 )
         return list(results)
+    def reconcile_stranded_tasks(self) -> list[Task]:
+        """Sweep the database for tasks that were in-flight during an ungraceful shutdown
+        and safely force them into terminal or stable states.
+        """
+        reconciled_tasks = []
+        # First, ensure app-plane execution receipts are reconciled
+        self.reconcile_app_plane()
+
+        for task in self._orchestrator.list_transient_tasks():
+            original_state = task.state
+            if task.state in (TaskState.CREATED, TaskState.PLANNING, TaskState.READY):
+                task = self._orchestrator.advance(task.id, "cancel")
+            elif task.state == TaskState.RUNNING:
+                task = self._orchestrator.advance(task.id, "execution_unknown")
+            elif task.state == TaskState.VERIFYING:
+                task = self._orchestrator.advance(task.id, "verification_failed")
+            elif task.state == TaskState.RECOVERING:
+                task = self._orchestrator.advance(task.id, "recovery_failed")
+            else:
+                continue
+
+            self._audit.record(
+                actor="system",
+                component="recovery.reconciliation",
+                event_type="recovery.task_reconciled",
+                action="reconcile_stranded_tasks",
+                result="reconciled",
+                task_id=task.id,
+                request_id=task.request_id,
+                metadata={"original_state": original_state.value, "new_state": task.state.value}
+            )
+            reconciled_tasks.append(task)
+
+        return reconciled_tasks

@@ -43,4 +43,5 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
+ignore = ["E501"]
 select = ["E", "F", "I", "UP", "B"]

@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from uuid import uuid4
-
 import click
 import uvicorn
 
 from shea.audio.service import AudioInteractionService
 from shea.bootstrap import build_runtime
-from shea.contracts.models import Intent
-from shea.events.contracts import Event
 
 
 @click.group()
@@ -57,36 +52,23 @@ def chat(db_path: str, workspace: str) -> None:
             if user_input.lower() in ("exit", "quit"):
                 break
 
-            now = datetime.now(UTC)
-            intent = Intent(
-                id=uuid4().hex,
-                task_id=uuid4().hex,
-                type="chat",
-                goal=user_input,
-                parameters={"profile_id": "cli_user"},
-                source="cli",
-                created_at=now,
-            )
-
             click.secho(
-                f"\n[Agent] Intent matched! Planning execution for: {intent.id}...\n",
+                "\n[Agent] Processing request...\n",
                 fg="cyan",
             )
-            runtime.event_bus.publish(
-                Event(
-                    event_id=uuid4().hex,
-                    event_type="interaction.intent_received",
-                    source="cli",
-                    timestamp=now,
-                    payload={
-                        "intent_id": intent.id,
-                        "task_id": intent.task_id,
-                        "goal": intent.goal,
-                        "profile_id": "cli_user",
-                    },
-                    correlation_id=intent.id,
-                )
+            
+            # Follows the unified pipeline: Text -> Intent -> Plan -> Execute
+            result = runtime.interaction_service.handle_text(
+                text=user_input,
+                session_id="cli_session",
+                actor="cli_user",
+                explicit_user_ack=True, # In CLI, we can prompt or assume auto-ack depending on risk
             )
+            
+            if result.error:
+                click.secho(f"Error: {result.error}", fg="red")
+            else:
+                click.secho(f"Task Complete: {result.task.id}", fg="green")
 
         except (KeyboardInterrupt, EOFError):
             break

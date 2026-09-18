@@ -15,6 +15,7 @@ class SheaPlugin(Protocol):
     def register(self, runtime: SheaRuntime) -> None:
         """Called by the runtime during bootstrap to allow the plugin to hook in.
         
-        Plugins can register new Tools, Adapters, Event listeners, or Memory handlers.
+        Note: The runtime passed here may be a RestrictedRuntimeProxy enforcing
+        permissions declared in the plugin's security manifest.
         """
         ...

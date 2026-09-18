@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     """A user submitted chat message or command."""
     message: str = Field(..., description="The textual input from the user.")
+    session_id: str | None = Field(None, description="Optional session identifier.")
     profile_id: str | None = Field(None, description="Optional profile identifier.")
     context_overrides: dict[str, Any] = Field(
         default_factory=dict, 

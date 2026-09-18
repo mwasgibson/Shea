@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
+from shea.app.facade import SheaApp
 from shea.bootstrap import build_runtime
 
 
@@ -33,18 +34,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     Path(args.workspace).mkdir(parents=True, exist_ok=True)
 
-    runtime = build_runtime(
+    app = SheaApp(build_runtime(
         args.db,
         workspace=args.workspace,
         register_builtins=True,
-    )
+    ))
 
     if args.command is None or args.command == "boot":
         print("shea ready; app-plane reconcile done")
         return
 
     if args.command == "run":
-        result = runtime.interaction_service.handle_text(
+        result = app.chat(
             args.text,
             session_id=args.session,
             explicit_user_ack=True,

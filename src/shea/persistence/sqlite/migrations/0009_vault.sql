@@ -4,9 +4,11 @@
 
 CREATE TABLE IF NOT EXISTS credentials (
     id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL DEFAULT 'system',
+    name TEXT NOT NULL,
     description TEXT,
     allowed_tools TEXT NOT NULL, -- JSON array of allowed tool globs (e.g. '["github.*"]')
     created_at TEXT NOT NULL,
-    updated_at TEXT
+    updated_at TEXT,
+    UNIQUE(profile_id, name)
 ) STRICT;

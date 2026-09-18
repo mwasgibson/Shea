@@ -316,9 +316,9 @@ source rather than relying on this file to keep re-flagging it.
 
 ### Still open (polish)
 
-- [ ] Always register `LocalBrowserAdapter` even when Playwright engine is registered (runtime fallback)
-- [ ] Package `__init__` refresh (`shea`, `execution`, `model`, `app/adapters/__init__.py`)
-- [ ] Production default real `ExecutionBoundary` (not unsafe-by-default)
-- [ ] Narrow CLI-facing runtime surface to interaction + reconcile
-- [ ] GUI/API interaction adapters beyond CLI
-- [ ] Memory, activation/audio, extensions, richer observability
+- [x] Always register `LocalBrowserAdapter` even when Playwright engine is registered (runtime fallback)
+- [x] Package `__init__` refresh (`shea`, `execution`, `model`, `app/adapters/__init__.py`)
+- [x] Production default real `ExecutionBoundary` (not unsafe-by-default)
+- [x] Narrow CLI-facing runtime surface to interaction + reconcile — implemented via `SheaApp` facade.
+- [x] GUI/API interaction adapters beyond CLI — simple HTML/JS frontend wired into FastAPI.
+- [x] Memory, activation/audio, extensions, richer observability (built in previous tracks)
