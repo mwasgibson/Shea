@@ -37,3 +37,51 @@ class MemoryView(BaseModel):
     created_at: str
     expires_at: str | None
     confidence: float
+
+
+class CredentialView(BaseModel):
+    """Safe credential metadata for the GUI — never includes secret material."""
+
+    id: str
+    profile_id: str
+    name: str
+    description: str | None = None
+    allowed_tools: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str | None = None
+
+
+class CredentialCreateRequest(BaseModel):
+    """Create a credential. Secret is written to the secure store only."""
+
+    name: str
+    secret: str = Field(..., min_length=8)
+    description: str | None = None
+    profile_id: str = "default"
+    allowed_tools: list[str] = Field(default_factory=lambda: ["*"])
+
+
+class TaskView(BaseModel):
+    id: str
+    session_id: str
+    request_id: str
+    state: str
+    plan_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ProfileView(BaseModel):
+    id: str
+    name: str
+    preferences: dict[str, Any] = Field(default_factory=dict)
+    context_rules: dict[str, str] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ProfileUpsertRequest(BaseModel):
+    id: str
+    name: str
+    preferences: dict[str, Any] = Field(default_factory=dict)
+    context_rules: dict[str, str] = Field(default_factory=dict)

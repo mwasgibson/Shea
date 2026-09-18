@@ -107,3 +107,10 @@ class CredentialService:
         if pattern:
             return pattern.sub("[REDACTED_CREDENTIAL]", text)
         return text
+
+    def list_metadata(self, profile_id: str | None = None) -> list[CredentialMetadata]:
+        """Return credential metadata only — never secret values."""
+        metas = self._vault.list_metadata()
+        if profile_id is None:
+            return metas
+        return [m for m in metas if m.profile_id == profile_id]

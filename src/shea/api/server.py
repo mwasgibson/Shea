@@ -6,9 +6,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from shea.api.routes import interaction, memory, observability
+from shea.api.routes import credentials, interaction, memory, observability, profiles, tasks
 from shea.bootstrap import build_runtime
 
 
@@ -37,10 +36,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Enable CORS for local development UI access
+    # Allow origins: in production set SHEA_ALLOWED_ORIGINS=https://my.app.com
+    # In dev, defaults to wildcard for convenience.
+    raw_origins = os.environ.get("SHEA_ALLOWED_ORIGINS", "*")
+    cors_origins = [o.strip() for o in raw_origins.split(",")] if raw_origins != "*" else ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -50,12 +52,13 @@ def create_app() -> FastAPI:
     app.include_router(interaction.router, prefix="/api")
     app.include_router(memory.router, prefix="/api")
     app.include_router(observability.router, prefix="/api")
+    app.include_router(credentials.router, prefix="/api")
+    app.include_router(tasks.router, prefix="/api")
+    app.include_router(profiles.router, prefix="/api")
 
-    # Mount the static GUI files at the root
-    # Note: we will create this directory in Phase G1
-    gui_path = os.path.join(os.path.dirname(__file__), "..", "gui", "web")
-    if os.path.exists(gui_path):
-        app.mount("/", StaticFiles(directory=gui_path, html=True), name="gui")
+    # Register the built-in HTML/JS GUI at the root endpoint
+    from shea.api.gui import register_gui
+    register_gui(app)
 
     return app
 

@@ -3,132 +3,51 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shea Observability Dashboard</title>
+    <title>SHEA · Observability</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-      #dashboard-container {
-        flex: 1;
-        padding: 20px;
-        overflow-y: auto;
-        display: flex;
-        flex-direction: column;
-        gap: 20px;
-      }
-      .metrics-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-      }
-      .metric-card {
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        border: 1px solid var(--border-color);
-        text-align: center;
-      }
-      .metric-card h3 {
-        font-size: 12px;
-        color: var(--text-secondary);
-        text-transform: uppercase;
-        margin-bottom: 8px;
-      }
-      .metric-card .value {
-        font-size: 32px;
-        font-weight: bold;
-        color: var(--text-primary);
-      }
-      .charts-row {
-        display: flex;
-        gap: 20px;
-        height: 300px;
-      }
-      .chart-container {
-        flex: 1;
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        border: 1px solid var(--border-color);
-      }
-      .audit-table-container {
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        border: 1px solid var(--border-color);
-        flex: 1;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-      }
-      th,
-      td {
-        padding: 10px;
-        text-align: left;
-        border-bottom: 1px solid var(--border-color);
-      }
-      th {
-        color: var(--text-secondary);
-        font-weight: bold;
-      }
-    </style>
   </head>
   <body>
     <div id="app">
-      <!-- Sidebar Navigation -->
       <aside id="sidebar">
         <div class="sidebar-header">
-          <h2>Shea Agent</h2>
+          <div class="brand">
+            <h1>SHEA</h1>
+            <p>Audit · metrics</p>
+          </div>
           <span id="status-indicator" class="status online">Live</span>
         </div>
-
         <div class="sidebar-section">
-          <h3>Navigation</h3>
-          <ul id="nav-list" style="list-style: none; padding: 0">
-            <li style="margin-bottom: 10px">
-              <a
-                href="index.html"
-                style="
-                  text-decoration: none;
-                  color: var(--accent-color);
-                  font-weight: bold;
-                "
-                >💬 Chat Interface</a
-              >
-            </li>
-            <li>
-              <a
-                href="dashboard.html"
-                style="
-                  text-decoration: none;
-                  color: var(--accent-color);
-                  font-weight: bold;
-                "
-                >📊 Observability</a
-              >
-            </li>
+          <h3>Navigate</h3>
+          <ul class="nav-list">
+            <li><a href="index.html">Chat</a></li>
+            <li><a class="active" href="dashboard.html">Observability</a></li>
           </ul>
         </div>
       </aside>
 
-      <!-- Main Content: Dashboard -->
       <main id="dashboard-container">
         <div class="metrics-grid">
           <div class="metric-card">
-            <h3>Total Intents</h3>
+            <h3>Total intents</h3>
             <div class="value" id="val-intents">0</div>
           </div>
           <div class="metric-card">
-            <h3>Tools Executed</h3>
+            <h3>Tools executed</h3>
             <div class="value" id="val-tools">0</div>
           </div>
           <div class="metric-card">
-            <h3>Tool Success Rate</h3>
+            <h3>Success rate</h3>
             <div class="value" id="val-success-rate">0%</div>
           </div>
           <div class="metric-card">
-            <h3>Avg Execution Time</h3>
+            <h3>Avg duration</h3>
             <div class="value" id="val-avg-time">0 ms</div>
           </div>
         </div>
@@ -143,28 +62,23 @@
         </div>
 
         <div class="audit-table-container">
-          <h3 style="margin-bottom: 15px; color: var(--text-secondary)">
-            Live Audit Log
-          </h3>
+          <h3>Audit chain</h3>
           <table>
             <thead>
               <tr>
                 <th>Seq</th>
-                <th>Timestamp</th>
+                <th>Time</th>
                 <th>Component</th>
                 <th>Action</th>
                 <th>Result</th>
-                <th>Task ID</th>
+                <th>Task</th>
               </tr>
             </thead>
-            <tbody id="audit-table-body">
-              <!-- Audit logs injected here -->
-            </tbody>
+            <tbody id="audit-table-body"></tbody>
           </table>
         </div>
       </main>
     </div>
-
     <script src="dashboard.js"></script>
   </body>
 </html>

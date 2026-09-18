@@ -28,7 +28,7 @@ class SheaApp:
         return self._runtime.interaction_service.handle_text(
             text,
             session_id=session_id,
-            explicit_user_ack=True,
+            explicit_user_ack=explicit_user_ack,
             run=run,
         )
 

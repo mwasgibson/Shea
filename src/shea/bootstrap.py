@@ -122,6 +122,33 @@ class SheaRuntime:
         return self.recovery_service.reconcile_stranded_tasks()
 
 
+def _load_dotenv() -> None:
+    """Load .env from the project root (parent of src/) or CWD, stdlib only.
+
+    Vars already set in the environment are NOT overwritten — explicit exports
+    always win. This means ``SHEA_MODEL_PROVIDER=ghost python -m shea`` still
+    works as expected.
+    """
+    # Walk up from this file to find .env next to src/
+    candidates = [
+        Path(__file__).parent.parent.parent / ".env",  # repo root
+        Path.cwd() / ".env",                           # wherever the process started
+    ]
+    for dotenv_path in candidates:
+        if not dotenv_path.is_file():
+            continue
+        with open(dotenv_path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip("\"'")   # strip optional quotes
+                if key and key not in os.environ:    # don't override existing vars
+                    os.environ[key] = value
+        break  # stop after the first .env found
+
 
 def _filesystem_roots(value: Iterable[str] | None, config_resolver: ConfigResolver | None = None) -> frozenset[str]:
     if value is not None:
@@ -158,6 +185,10 @@ def build_runtime(
     production caller should provide a real execution boundary instead of
     relying on the unsafe fallback in ``ToolExecutor``.
     """
+    from shea.observability.tracer import configure_tracing
+    configure_tracing()
+    # Auto-load .env from the project root so credentials don't need manual export
+    _load_dotenv()
     conn = open_connection(db_path)
     run_migrations(conn)
     unit_of_work = SqliteUnitOfWork(conn)

@@ -58,3 +58,9 @@ class SqliteProfileRepository:
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
+
+    def list_all(self) -> list[UserProfile]:
+        rows = self._conn.execute(
+            "SELECT * FROM profiles ORDER BY name ASC"
+        ).fetchall()
+        return [self._row_to_model(row) for row in rows]

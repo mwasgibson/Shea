@@ -36,3 +36,7 @@ class ProfileService:
         context_block = profile.get_context_injection()
         # Prepend context as a system block so the agent sees it before the actual prompt
         return f"{context_block}\n\nUser Request:\n{raw_content}"
+
+    def list_profiles(self) -> list[UserProfile]:
+        with self._uow:
+            return self._repo.list_all()

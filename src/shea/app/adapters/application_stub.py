@@ -25,8 +25,6 @@ class ApplicationStubAdapter:
     name = "application.stub"
 
     def supports(self, contract: ExecutionContract) -> bool:
-        if platform.system() in {"Darwin", "Windows", "Linux"}:
-            pass
         return contract.operation.startswith("application.") or contract.capability in {
             "application.launch",
             "application.activate",

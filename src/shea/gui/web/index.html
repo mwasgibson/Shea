@@ -3,81 +3,296 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shea Unified GUI</title>
+    <title>SHEA Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
     <div id="app">
-      <!-- Sidebar: Memory & System State -->
-      <aside id="sidebar">
-        <div class="sidebar-header">
-          <h2>Shea Agent</h2>
-          <span id="status-indicator" class="status offline">Offline</span>
+      <aside id="rail">
+        <div class="rail-header">
+          <div class="brand">
+            <h1>SHEA</h1>
+            <p>Control console</p>
+          </div>
+          <span id="status-pill" class="pill offline">Offline</span>
         </div>
-
-        <div class="sidebar-section">
-          <h3>Navigation</h3>
-          <ul id="nav-list" style="list-style: none; padding: 0">
-            <li style="margin-bottom: 10px">
-              <a
-                href="index.html"
-                style="
-                  text-decoration: none;
-                  color: var(--accent-color);
-                  font-weight: bold;
-                "
-                >💬 Chat Interface</a
-              >
-            </li>
-            <li>
-              <a
-                href="dashboard.html"
-                style="
-                  text-decoration: none;
-                  color: var(--text-secondary);
-                  font-weight: bold;
-                "
-                >📊 Observability</a
-              >
-            </li>
-          </ul>
-        </div>
-
-        <div
-          class="sidebar-section"
-          style="border-top: 1px solid var(--border-color)"
-        >
-          <h3>Memory Brain <button id="btn-refresh-memory">↻</button></h3>
-          <ul id="memory-list">
-            <!-- Memories injected here -->
-          </ul>
+        <nav class="nav" id="nav">
+          <button type="button" data-view="chat" class="active">Chat</button>
+          <button type="button" data-view="tasks">
+            Tasks <span class="count" id="count-tasks">0</span>
+          </button>
+          <button type="button" data-view="memory">
+            Memory <span class="count" id="count-memory">0</span>
+          </button>
+          <button type="button" data-view="vault">Vault</button>
+          <button type="button" data-view="audit">Audit</button>
+          <button type="button" data-view="events">
+            Events <span class="count" id="count-events">0</span>
+          </button>
+          <button type="button" data-view="dashboard">Dashboard</button>
+        </nav>
+        <div class="rail-footer">
+          GUI → InteractionService only.<br />
+          Never ToolExecutor. Never vault secrets.
         </div>
       </aside>
 
-      <!-- Main Content: Chat Interface -->
-      <main id="chat-container">
-        <div id="chat-history">
-          <div class="message system">
-            Welcome to the unified Shea Agent interface.
+      <div id="workspace">
+        <!-- CHAT -->
+        <section class="view active" id="view-chat">
+          <div class="topbar">
+            <div>
+              <h2>InteractionService</h2>
+              <div class="sub">
+                plan → decide → authorize → execute → verify
+              </div>
+            </div>
+            <div class="pipeline" id="pipeline">
+              <span class="stage" data-stage="intent">intent</span>
+              <span class="stage" data-stage="plan">plan</span>
+              <span class="stage" data-stage="policy">policy</span>
+              <span class="stage" data-stage="authorize">authorize</span>
+              <span class="stage" data-stage="execute">execute</span>
+              <span class="stage" data-stage="verify">verify</span>
+            </div>
           </div>
-        </div>
+          <div id="chat-history"></div>
+          <div class="composer">
+            <div class="hints" id="hints">
+              <button type="button" class="hint" data-text="write a note">
+                write a note
+              </button>
+              <button type="button" class="hint" data-text="read the note">
+                read the note
+              </button>
+              <button
+                type="button"
+                class="hint"
+                data-text="remember my editor is neovim"
+              >
+                remember preference
+              </button>
+              <button type="button" class="hint" data-text="what is my editor">
+                retrieve memory
+              </button>
+            </div>
+            <form id="chat-form">
+              <input
+                id="chat-input"
+                type="text"
+                placeholder="Task or question…"
+                autocomplete="off"
+                required
+              />
+              <button class="btn primary" type="submit" id="send-btn">
+                Send
+              </button>
+            </form>
+          </div>
+        </section>
 
-        <div id="input-area">
-          <form id="chat-form">
-            <input
-              type="text"
-              id="chat-input"
-              placeholder="Give the agent a task..."
-              autocomplete="off"
-              required
-            />
-            <button type="submit">Send</button>
-          </form>
-        </div>
-      </main>
+        <!-- TASKS -->
+        <section class="view" id="view-tasks">
+          <div class="topbar">
+            <div>
+              <h2>Tasks</h2>
+              <div class="sub">Derived from live events + audit (task_id)</div>
+            </div>
+            <button type="button" class="btn sm" id="btn-refresh-tasks">
+              Refresh
+            </button>
+          </div>
+          <div class="panel-scroll">
+            <div class="list" id="task-list"></div>
+          </div>
+        </section>
+
+        <!-- MEMORY -->
+        <section class="view" id="view-memory">
+          <div class="topbar">
+            <div>
+              <h2>Memory</h2>
+              <div class="sub">Active only — deleted becomes unretrievable</div>
+            </div>
+            <button type="button" class="btn sm" id="btn-refresh-memory">
+              Refresh
+            </button>
+          </div>
+          <div class="panel-scroll">
+            <div class="list" id="memory-list"></div>
+          </div>
+        </section>
+
+        <!-- VAULT -->
+        <section class="view" id="view-vault">
+          <div class="topbar">
+            <div>
+              <h2>Credential vault</h2>
+              <div class="sub">
+                References only — never secret material in the GUI
+              </div>
+            </div>
+            <button type="button" class="btn sm" id="btn-refresh-vault">
+              Refresh
+            </button>
+          </div>
+          <div class="panel-scroll">
+            <div class="card" style="margin-bottom: 16px">
+              <h3>Model</h3>
+              <div class="desc">
+                CredentialReference → destination + operation + lifetime. Tools
+                receive a scoped capability, not the vault.
+              </div>
+            </div>
+            <div class="list" id="vault-list"></div>
+          </div>
+        </section>
+
+        <!-- AUDIT -->
+        <section class="view" id="view-audit">
+          <div class="topbar">
+            <div>
+              <h2>Audit chain</h2>
+              <div class="sub">Observer read from shared DB — no mutation</div>
+            </div>
+            <button type="button" class="btn sm" id="btn-refresh-audit">
+              Refresh
+            </button>
+          </div>
+          <div class="panel-scroll">
+            <div class="card">
+              <table class="data">
+                <thead>
+                  <tr>
+                    <th>Seq</th>
+                    <th>Time</th>
+                    <th>Component</th>
+                    <th>Action</th>
+                    <th>Result</th>
+                    <th>Task</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- EVENTS -->
+        <section class="view" id="view-events">
+          <div class="topbar">
+            <div>
+              <h2>Event bus</h2>
+              <div class="sub">Live SSE from /api/interaction/stream</div>
+            </div>
+            <button type="button" class="btn sm" id="btn-clear-events">
+              Clear
+            </button>
+          </div>
+          <div class="panel-scroll" id="event-feed"></div>
+        </section>
+
+        <!-- DASHBOARD -->
+        <section class="view" id="view-dashboard">
+          <div class="topbar">
+            <div>
+              <h2>Dashboard</h2>
+              <div class="sub">Metrics + audit snapshot</div>
+            </div>
+            <button type="button" class="btn sm" id="btn-refresh-dash">
+              Refresh
+            </button>
+          </div>
+          <div class="panel-scroll">
+            <div class="grid-4" style="margin-bottom: 16px">
+              <div class="card">
+                <h3>CPU</h3>
+                <div class="value" id="m-cpu">0%</div>
+                <div class="desc" id="m-load">load —</div>
+              </div>
+              <div class="card">
+                <h3>RAM</h3>
+                <div class="value" id="m-ram">0%</div>
+                <div class="desc" id="m-ram-detail">—</div>
+              </div>
+              <div class="card">
+                <h3>Disk</h3>
+                <div class="value" id="m-disk">0%</div>
+                <div class="desc" id="m-disk-detail">—</div>
+              </div>
+              <div class="card">
+                <h3>Provider health</h3>
+                <div class="value" id="m-prov">100</div>
+                <div class="desc">0–100 score</div>
+              </div>
+            </div>
+            <div class="grid-4" style="margin-bottom: 16px">
+              <div class="card">
+                <h3>RPM</h3>
+                <div class="value" id="m-rpm">0</div>
+                <div class="desc">requests / min</div>
+              </div>
+              <div class="card">
+                <h3>Rate budget</h3>
+                <div class="value" id="m-budget">100%</div>
+                <div class="desc" id="m-rl-hits">0 limit hits</div>
+              </div>
+              <div class="card">
+                <h3>Active tasks</h3>
+                <div class="value" id="m-active">0</div>
+              </div>
+              <div class="card">
+                <h3>Security blocks</h3>
+                <div class="value" id="m-sec">0</div>
+              </div>
+            </div>
+            <div class="grid-4" style="margin-bottom: 16px">
+              <div class="card">
+                <h3>Intents</h3>
+                <div class="value" id="m-intents">0</div>
+              </div>
+              <div class="card">
+                <h3>Tools</h3>
+                <div class="value" id="m-tools">0</div>
+              </div>
+              <div class="card">
+                <h3>Success</h3>
+                <div class="value" id="m-rate">0%</div>
+              </div>
+              <div class="card">
+                <h3>Avg ms</h3>
+                <div class="value" id="m-avg">0</div>
+              </div>
+            </div>
+            <div class="grid-2" style="margin-bottom: 16px">
+              <div class="chart-box"><canvas id="chart-success"></canvas></div>
+              <div class="chart-box"><canvas id="chart-latency"></canvas></div>
+            </div>
+            <div class="card">
+              <h3>Recent audit</h3>
+              <table class="data">
+                <thead>
+                  <tr>
+                    <th>Seq</th>
+                    <th>Action</th>
+                    <th>Result</th>
+                    <th>Task</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-audit"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
-
-    <!-- Vanilla JS Logic -->
     <script src="app.js"></script>
   </body>
 </html>

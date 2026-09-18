@@ -67,3 +67,35 @@ async def get_audit_logs(
         events.append(event_dict)
 
     return AuditLogResponse(events=events, total=len(events))
+
+
+class SystemHealth(BaseModel):
+    cpu_percent: float
+    load_1m: float
+    ram_percent: float
+    ram_used_mb: float
+    ram_total_mb: float
+    disk_percent: float
+    requests_per_minute: float
+    rate_limit_remaining: float
+    provider_health: float
+    active_tasks: int
+    security_blocks: int
+
+
+@router.get("/health", response_model=SystemHealth)
+async def get_health() -> SystemHealth:
+    snap = global_metrics.get_snapshot()
+    return SystemHealth(
+        cpu_percent=snap.cpu_percent,
+        load_1m=snap.load_1m,
+        ram_percent=snap.ram_percent,
+        ram_used_mb=snap.ram_used_mb,
+        ram_total_mb=snap.ram_total_mb,
+        disk_percent=snap.disk_percent,
+        requests_per_minute=snap.requests_per_minute,
+        rate_limit_remaining=snap.rate_limit_remaining,
+        provider_health=snap.provider_health,
+        active_tasks=snap.active_tasks,
+        security_blocks=snap.security_blocks,
+    )
