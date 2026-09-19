@@ -60,6 +60,8 @@ class InteractionService:
                 profile_id=profile_id,
             )
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             # Phase E Fault Tolerance: Do not crash the entire interaction layer if LLM fails
             # We construct a synthetic planning failure result
             import uuid
@@ -111,6 +113,8 @@ class InteractionService:
                 task=result.task,
             )
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             # Catch catastrophic adapter crashes (e.g. C-level segfaults wrapped in RuntimeError)
             from shea.decision.exceptions import AuthorizationRequiredError
             if isinstance(e, AuthorizationRequiredError):
