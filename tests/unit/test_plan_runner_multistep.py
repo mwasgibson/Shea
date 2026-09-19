@@ -10,8 +10,8 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Plan, PlanStep, Task
 from shea.core.orchestrator import Orchestrator
-from shea.decision.service import DecisionService
 from shea.decision.pending import PendingConfirmationStore
+from shea.decision.service import DecisionService
 from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import STEP_COMPLETED, PlanRunner
 from shea.execution.service import ExecutionService

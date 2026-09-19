@@ -9,10 +9,10 @@ from shea.contracts.enums import TaskState
 from shea.contracts.models import Task
 from shea.core.orchestrator import Orchestrator
 from shea.decision.exceptions import AuthorizationRequiredError, PolicyDeniedError
+from shea.decision.pending import PendingConfirmationStore
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
-from shea.decision.pending import PendingConfirmationStore
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentRepository

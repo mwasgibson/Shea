@@ -24,6 +24,7 @@ from shea.audit.recorder import AuditRecorder
 from shea.config.resolver import ConfigResolver
 from shea.contracts.models import Task, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
+from shea.decision.pending import PendingConfirmationStore
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
@@ -205,8 +206,6 @@ def policy_engine() -> PolicyEngine:
 def risk_engine() -> RiskEngine:
     return RiskEngine()
 
-
-from shea.decision.pending import PendingConfirmationStore
 
 @pytest.fixture
 def pending_confirmations() -> PendingConfirmationStore:

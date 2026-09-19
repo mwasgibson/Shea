@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from shea.app.supervisor import ExecutionSupervisor
 from shea.audit.recorder import AuditRecorder
-from shea.contracts.enums import ExecutionOutcome, RecoveryStrategy, TaskState
+from shea.contracts.enums import RecoveryStrategy, TaskState
 from shea.contracts.models import ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
 from shea.decision.pending import PendingConfirmationStore
@@ -15,7 +15,6 @@ from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
-from shea.planning.capabilities import capabilities_for_plan
 from shea.planning.service import PlanningService
 from shea.planning.templates import PlanTemplateRegistry, StepBlueprint
 from shea.ports.clock import Clock
