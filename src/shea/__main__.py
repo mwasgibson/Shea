@@ -127,10 +127,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(f"error: {result.error}", file=sys.stderr)
             sys.exit(1)
 
-        plan = result.planning.plan
-        print(f"plan_steps={len(plan.steps)}")
-        for i, step in enumerate(plan.steps, start=1):
-            print(f"  {i}. {step.tool} {step.description if step.description else ''}".rstrip())
+        if result.planning is not None:
+            plan = result.planning.plan
+            print(f"plan_steps={len(plan.steps)}")
+            for i, step in enumerate(plan.steps, start=1):
+                print(f"  {i}. {step.tool} {step.description if step.description else ''}".rstrip())
 
         if result.run is not None:
             for step_result in result.run.step_results:

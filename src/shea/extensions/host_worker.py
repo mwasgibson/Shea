@@ -46,6 +46,16 @@ def main() -> None:
                 if plugin_obj is not None and hasattr(plugin_obj, "declare"):
                     declarations = list(plugin_obj.declare() or [])
                 _write({"id": req_id, "ok": True, "result": {"declarations": declarations}, "error": None})
+            elif method == "invoke_tool":
+                if plugin_obj is None:
+                    raise RuntimeError("plugin not configured")
+                tool = str(params.get("tool", ""))
+                action = str(params.get("action", ""))
+                arguments = typing.cast(dict[str, typing.Any], params.get("arguments") or {})
+                if not hasattr(plugin_obj, "invoke"):
+                    raise RuntimeError("plugin does not implement invoke()")
+                out = plugin_obj.invoke(tool=tool, action=action, arguments=arguments)
+                _write({"id": req_id, "ok": True, "result": {"output": out}, "error": None})
             elif method == "shutdown":
                 _write({"id": req_id, "ok": True, "result": {}, "error": None})
                 break

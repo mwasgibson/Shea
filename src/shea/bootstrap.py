@@ -34,6 +34,7 @@ from shea.credentials.broker import SheaCredentialBroker
 from shea.credentials.keyring_adapter import KeyringSecureStore
 from shea.credentials.ports import CredentialBroker
 from shea.credentials.service import CredentialService
+from shea.decision.pending import PendingConfirmationStore
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
@@ -43,6 +44,7 @@ from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import PlanRunner
 from shea.execution.service import ExecutionService
 from shea.extensions.loader import PluginLoader
+from shea.memory.broker import MemoryBroker
 from shea.memory.extractor import MemoryExtractor
 from shea.memory.lifecycle.expiration import MemoryLifecycleEnforcer
 from shea.memory.retrieval.ranking import BoundedContextAssembler, HybridMemoryRetriever
@@ -104,6 +106,7 @@ class SheaRuntime:
     plan_runner: PlanRunner
     recovery_service: RecoveryService
     decision_service: DecisionService
+    pending_confirmations: PendingConfirmationStore
     verification_service: VerificationService
     security_service: SecurityService
     event_bus: EventBus
@@ -325,11 +328,13 @@ def build_runtime(
     )
 
     decision_channel = DecisionChannel(event_bus, clock, id_generator)
+    pending_confirmations = PendingConfirmationStore()
     decision_service = DecisionService(
         policy_engine=PolicyEngine(),
         risk_engine=RiskEngine(),
         orchestrator=orchestrator,
         decision_repository=decision_repository,
+        pending_confirmations=pending_confirmations,
         risk_repository=risk_repository,
         authorization_repository=authorization_repository,
         plan_repository=plan_repository,
@@ -377,6 +382,26 @@ def build_runtime(
         id_generator=id_generator,
         unit_of_work=unit_of_work,
     )
+    memory_store = SqliteMemoryRepository(conn, unit_of_work=unit_of_work)
+    vector_store = FtsVectorStore(conn, unit_of_work=unit_of_work)
+    memory_retriever = HybridMemoryRetriever(vector_store, memory_store)
+    context_assembler = BoundedContextAssembler(clock, retriever=memory_retriever)
+    memory_lifecycle = MemoryLifecycleEnforcer(conn, clock, unit_of_work=unit_of_work)
+    profile_service = ProfileService(conn, unit_of_work=unit_of_work)
+    memory_service = MemoryService(
+        memory_store=memory_store,
+        vector_store=vector_store,
+        retriever=memory_retriever,
+        assembler=context_assembler,
+        lifecycle=memory_lifecycle,
+    )
+    memory_broker = MemoryBroker(
+        memory_service=memory_service,
+        clock=clock,
+        id_generator=id_generator,
+        model_provider=provider,
+    )
+    
     planning_service = PlanningService(
         orchestrator=orchestrator,
         deterministic_matcher=matcher,
@@ -389,6 +414,8 @@ def build_runtime(
         id_generator=id_generator,
         unit_of_work=unit_of_work,
         model_provider=provider,
+        memory_service=memory_service,
+        context_assembler=context_assembler,
     )
     recovery_service = RecoveryService(
         orchestrator=orchestrator,
@@ -410,28 +437,10 @@ def build_runtime(
         security_service=security_service,
         plan_repository=plan_repository,
         tool_registry=registry,
+        pending_confirmations=pending_confirmations,
+        clock=clock,
     )
     
-    memory_store = SqliteMemoryRepository(conn, unit_of_work=unit_of_work)
-    vector_store = FtsVectorStore(conn, unit_of_work=unit_of_work)
-    memory_retriever = HybridMemoryRetriever(vector_store, memory_store)
-    context_assembler = BoundedContextAssembler(clock, retriever=memory_retriever)
-    memory_lifecycle = MemoryLifecycleEnforcer(conn, clock, unit_of_work=unit_of_work)
-    profile_service = ProfileService(conn, unit_of_work=unit_of_work)
-    memory_service = MemoryService(
-        memory_store=memory_store,
-        vector_store=vector_store,
-        retriever=memory_retriever,
-        assembler=context_assembler,
-        lifecycle=memory_lifecycle,
-    )
-    from shea.memory.broker import MemoryBroker
-    memory_broker = MemoryBroker(
-        memory_service=memory_service,
-        clock=clock,
-        id_generator=id_generator,
-        model_provider=provider,
-    )
     memory_extractor = MemoryExtractor(
         event_bus=event_bus,
         memory_broker=memory_broker,
@@ -443,6 +452,7 @@ def build_runtime(
     interaction_service = InteractionService(
         planning_service=planning_service,
         plan_runner=plan_runner,
+        orchestrator=orchestrator,
     )
 
     runtime = SheaRuntime(
@@ -457,6 +467,7 @@ def build_runtime(
         plan_runner=plan_runner,
         recovery_service=recovery_service,
         decision_service=decision_service,
+        pending_confirmations=pending_confirmations,
         verification_service=verification_service,
         security_service=security_service,
         event_bus=event_bus,

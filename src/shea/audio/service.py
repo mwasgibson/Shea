@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
+from _collections_abc import Callable
 
+from shea.audio.activation import ActivationController
 from shea.audio.adapters.ingress import DummyWhisperTranscriber, SubprocessAudioSource
 from shea.audio.ports import AudioSource, AudioTranscriber, WakeWordDetector
 from shea.bootstrap import SheaRuntime
@@ -75,3 +78,12 @@ class AudioInteractionService:
                     
         except KeyboardInterrupt:
             logger.info("Audio loop terminated by user.")
+
+    def listen_and_dispatch(self, on_intent: Callable[[str], None]) -> str | None:
+        ctrl = ActivationController(
+            source=self.source,
+            transcriber=self.transcriber,
+            on_intent=on_intent,
+            wake_word=os.environ.get("SHEA_WAKE_WORD"),
+        )
+        return ctrl.run_once()

@@ -12,6 +12,7 @@ from shea.decision.exceptions import AuthorizationRequiredError, PolicyDeniedErr
 from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
+from shea.decision.pending import PendingConfirmationStore
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentRepository
@@ -121,6 +122,7 @@ def denying_decision_service(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
+        pending_confirmations=PendingConfirmationStore(),
     )
 
 
@@ -262,6 +264,7 @@ def test_decision_service_transaction_rolls_back_on_audit_failure(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
+        pending_confirmations=PendingConfirmationStore(),
     )
 
     with pytest.raises(RuntimeError, match="simulated audit sink failure"):

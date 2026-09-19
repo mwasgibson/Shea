@@ -4,8 +4,12 @@ from dataclasses import dataclass
 
 from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Plan, PlanStep, Task, ToolRequest
+from shea.decision.exceptions import AuthorizationRequiredError
+from shea.decision.pending import PendingConfirmation, PendingConfirmationStore
 from shea.decision.service import DecisionService
+from shea.execution.operation_graph import OperationGraph
 from shea.execution.service import ExecutionOutcomeRecord, ExecutionService
+from shea.ports.clock import Clock
 from shea.ports.repositories import PlanRepository
 from shea.profiles.snapshot import ProfileSnapshot
 from shea.security.service import SecurityService
@@ -29,48 +33,6 @@ class PlanRunResult:
 
 
 
-def sort_steps_topologically(steps: list[PlanStep]) -> list[PlanStep]:
-    step_dict: dict[str, PlanStep] = {s.id: s for s in steps}
-    
-    # dependencies: map step_id -> set of prerequisite step_ids
-    # We only care about dependencies that are actually executable (have a tool)
-    executable_ids: set[str] = set(step_dict.keys())
-    
-    dependencies: dict[str, set[str]] = {}
-    for s in steps:
-        deps: set[str] = set()
-        for dep in getattr(s, "depends_on", []):
-            if isinstance(dep, str) and dep in executable_ids:
-                deps.add(dep)
-        dependencies[s.id] = deps
-
-    ordered_step_ids: list[str] = []
-    
-    while dependencies:
-        # Find all steps that have no unmet prerequisites
-        ready_ids: list[str] = [sid for sid, d in dependencies.items() if not d]
-        
-        if not ready_ids:
-            # We have steps left, but none are ready. Graph has a cycle.
-            raise ValueError("Plan step dependencies contain a cycle or unresolved edge")
-            
-        # Tie-break deterministic execution by fallback `order` field
-        def _get_order(sid: str) -> int:
-            return step_dict[sid].order
-            
-        ready_ids.sort(key=_get_order)
-        
-        # We can theoretically execute all ready_ids in parallel.
-        # But this PlanRunner processes them sequentially. We will just pick the first one
-        # or we could append all of them. Since we process sequentially, let's just 
-        # add all of them into the queue.
-        for ready_id in ready_ids:
-            ordered_step_ids.append(ready_id)
-            del dependencies[ready_id]
-            for deps_set in dependencies.values():
-                deps_set.discard(ready_id)
-                
-    return [step_dict[sid] for sid in ordered_step_ids]
 
 class PlanRunner:
     """Execute a plan step-by-step with per-step authorization binding.
@@ -103,6 +65,8 @@ class PlanRunner:
         security_service: SecurityService,
         plan_repository: PlanRepository,
         tool_registry: ToolRegistry,
+        pending_confirmations: PendingConfirmationStore,
+        clock: Clock,
     ) -> None:
         self._decision = decision_service
         self._execution = execution_service
@@ -110,6 +74,8 @@ class PlanRunner:
         self._security = security_service
         self._plans = plan_repository
         self._tools = tool_registry
+        self._pending: PendingConfirmationStore = pending_confirmations
+        self._clock: Clock = clock
 
     def run(
         self,
@@ -122,8 +88,16 @@ class PlanRunner:
         if plan is None:
             raise ValueError(f"Task {task.id!r} has no persisted plan")
 
-        executable_steps = [s for s in plan.steps if s.tool]
-        steps = sort_steps_topologically(executable_steps)
+        graph = OperationGraph.from_plan(plan)
+        ordered_nodes = graph.topological_order()
+        
+        steps_by_id = {s.id: s for s in plan.steps}
+        steps = [
+            steps_by_id[node.step_id] 
+            for node in ordered_nodes 
+            if steps_by_id[node.step_id].tool
+        ]
+        
         if not steps:
             raise ValueError(f"Plan for task {task.id!r} has no executable steps")
 
@@ -144,6 +118,7 @@ class PlanRunner:
                 stopped_early=False,
             )
 
+        step: PlanStep | None = None
         for position, index in enumerate(pending_indices):
             step = steps[index]
             is_last_pending = position == len(pending_indices) - 1
@@ -161,16 +136,31 @@ class PlanRunner:
                 capabilities = self._tools.get_declaration(step.tool).capabilities
                 snapshot_params = {"_profile_snapshot": current.profile_snapshot} if current.profile_snapshot else {}
                 snapshot = ProfileSnapshot.from_parameters(snapshot_params)
-                decision_outcome = self._decision.evaluate_and_authorize(
-                    current,
-                    capabilities=capabilities,
-                    plan=plan,
-                    step=step,
-                    arguments=dict(step.arguments),
-                    acting_user=acting_user,
-                    explicit_user_ack=explicit_user_ack,
-                    profile_id=snapshot.profile_id,
-                )
+                try:
+                    decision_outcome = self._decision.evaluate_and_authorize(
+                        current,
+                        capabilities=capabilities,
+                        plan=plan,
+                        step=step,
+                        arguments=dict(step.arguments),
+                        acting_user=acting_user,
+                        explicit_user_ack=explicit_user_ack,
+                        profile_id=snapshot.profile_id,
+                    )
+                except AuthorizationRequiredError as exc:
+                    self._pending.put(
+                        PendingConfirmation(
+                            task_id=task.id,
+                            session_id=task.session_id,
+                            decision_id=exc.decision.id,
+                            risk=exc.decision.risk.value,
+                            explanation=exc.risk_assessment.explanation,
+                            capabilities=list(exc.decision.capabilities),
+                            created_at=self._clock.now(),
+                            acting_user=acting_user,
+                        )
+                    )
+                    raise
                 current = decision_outcome.task
 
                 request = ToolRequest(
@@ -220,6 +210,27 @@ class PlanRunner:
 
             if not more_steps:
                 break
+
+        if stopped_early and step:
+            # Find the node that failed to check its failure policy
+            failed_node = next((n for n in ordered_nodes if n.step_id == step.id), None)
+            if failed_node and failed_node.failure_policy == "compensate":
+                for comp in graph.compensation_chain(step.id):
+                    if not comp.compensation_tool:
+                        continue
+                    
+                    req = ToolRequest(
+                        request_id=current.request_id,
+                        tool=comp.compensation_tool,
+                        action="compensate",
+                        arguments=comp.compensation_arguments,
+                    )
+                    try:
+                        c_res = self._execution.execute(current, req)
+                        results.append(c_res)
+                        current = c_res.task
+                    except Exception as err:
+                        print(f"\n Compensation failed for step {comp.step_id}: {err}")
 
         return PlanRunResult(
             task=current,

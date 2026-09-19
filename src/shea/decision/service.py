@@ -27,6 +27,7 @@ from shea.security.binding import (
 
 from .confirmation import confirmation_rule_for
 from .exceptions import AuthorizationRequiredError, PolicyDeniedError
+from .pending import PendingConfirmationStore
 from .policy import PolicyEngine
 from .risk import RiskEngine, RiskFactors
 
@@ -93,6 +94,7 @@ class DecisionService:
         risk_engine: RiskEngine,
         orchestrator: Orchestrator,
         decision_repository: DecisionRepository,
+        pending_confirmations: PendingConfirmationStore,
         risk_repository: RiskAssessmentRepository,
         authorization_repository: AuthorizationRepository,
         plan_repository: PlanRepository,
@@ -104,6 +106,7 @@ class DecisionService:
     ) -> None:
         self._channel = channel
         self._policy = policy_engine
+        self._pending = pending_confirmations
         self._risk = risk_engine
         self._orchestrator = orchestrator
         self._decisions = decision_repository

@@ -11,6 +11,7 @@ from shea.contracts.enums import TaskState
 from shea.contracts.models import Plan, PlanStep, Task
 from shea.core.orchestrator import Orchestrator
 from shea.decision.service import DecisionService
+from shea.decision.pending import PendingConfirmationStore
 from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import STEP_COMPLETED, PlanRunner
 from shea.execution.service import ExecutionService
@@ -137,6 +138,8 @@ def test_two_step_write_then_read(
         security_service=security_service,
         plan_repository=plan_repository,
         tool_registry=registry,
+        pending_confirmations=PendingConfirmationStore(),
+        clock=clock,
     )
     result = runner.run(task, explicit_user_ack=True)
 

@@ -5,8 +5,10 @@ from shea.audit.recorder import AuditRecorder
 from shea.contracts.enums import ExecutionOutcome, RecoveryStrategy, TaskState
 from shea.contracts.models import ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
+from shea.decision.pending import PendingConfirmationStore
 from shea.decision.service import DecisionService
 from shea.execution.permit import ExecutionPermitAuthority
+from shea.execution.plan_runner import PlanRunner
 from shea.execution.service import ExecutionService
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
@@ -109,39 +111,22 @@ def test_full_pipeline_from_raw_text_to_completed(
     )
     assert planning_outcome.task.state == TaskState.READY
 
-    capabilities = capabilities_for_plan(planning_outcome.plan, tool_registry)
-    assert capabilities == frozenset({"network.connect"})
-
-    decision_outcome = decision_service.evaluate_and_authorize(
-        planning_outcome.task,
-        capabilities=capabilities,
-        plan=planning_outcome.plan,
-        step=planning_outcome.plan.steps[0] if planning_outcome.plan.steps else None,
-        arguments=dict(planning_outcome.plan.steps[0].arguments)
-        if planning_outcome.plan.steps
-        else None,
+    runner = PlanRunner(
+        decision_service=decision_service,
+        execution_service=execution_service,
+        verification_service=verification_service,
+        security_service=security_service,
+        plan_repository=plan_repository,
+        tool_registry=tool_registry,
+        pending_confirmations=PendingConfirmationStore(),
+        clock=clock,
     )
-    assert decision_outcome.task.state == TaskState.RUNNING
 
-    first_step = planning_outcome.plan.steps[0]
-    tool_request = ToolRequest(
-        request_id="req-exec-1", tool=first_step.tool or "", action=first_step.description
-    )
-    # Security enforcement happens inside execute() itself (structural,
-    # not a separate call a caller could forget).
-    execution_outcome = execution_service.execute(decision_outcome.task, tool_request)
-    assert execution_outcome.task.state == TaskState.VERIFYING
-    assert execution_outcome.outcome is ExecutionOutcome.SUCCESS
-    assert execution_outcome.response.success is True
-
-    scan_result = security_service.scan_output(
-        execution_outcome.task, first_step.tool or "", execution_outcome.response.data
-    )
-    assert scan_result.flagged is False
-
-    verification_result = verification_service.verify(execution_outcome.task)
-    assert verification_result.verification.verified is True
-    assert verification_result.task.state == TaskState.COMPLETED
+    run_result = runner.run(planning_outcome.task, explicit_user_ack=True)
+    
+    assert run_result.task.state == TaskState.COMPLETED
+    assert run_result.completed_steps == len(planning_outcome.plan.steps)
+    assert run_result.stopped_early is False
 
 
 def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
@@ -159,6 +144,7 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     audit_recorder: AuditRecorder,
     id_generator: IdGenerator,
     security_service: SecurityService,
+    verification_service: VerificationService,
     deterministic_matcher: DeterministicIntentMatcher,
     template_registry: PlanTemplateRegistry,
     tool_registry: ToolRegistry,
@@ -231,40 +217,25 @@ def test_full_pipeline_failure_enters_recovery_and_reaches_ready(
     )
     assert planning_outcome.task.state == TaskState.READY
 
-    capabilities = capabilities_for_plan(
-        planning_outcome.plan, tool_registry,
-    )
-    assert capabilities == frozenset({"network.connect"})
-
-    decision_outcome = decision_service.evaluate_and_authorize(
-        planning_outcome.task,
-        capabilities=capabilities,
-        plan=planning_outcome.plan,
-        step=planning_outcome.plan.steps[0] if planning_outcome.plan.steps else None,
-        arguments=dict(planning_outcome.plan.steps[0].arguments)
-        if planning_outcome.plan.steps
-        else None,
-    )
-    assert decision_outcome.task.state == TaskState.RUNNING
-
-    first_step = planning_outcome.plan.steps[0]
-
-    tool_request = ToolRequest(
-        request_id="req-recovery-1",
-        tool=first_step.tool or "",
-        action=first_step.description,
+    runner = PlanRunner(
+        decision_service=decision_service,
+        execution_service=execution_service,
+        verification_service=verification_service,
+        security_service=security_service,
+        plan_repository=plan_repository,
+        tool_registry=tool_registry,
+        pending_confirmations=PendingConfirmationStore(),
+        clock=clock,
     )
 
-    failed_execution = execution_service.execute(
-        decision_outcome.task, tool_request,
-    )
+    run_result = runner.run(planning_outcome.task, explicit_user_ack=True)
+
     assert execution_count == 1
-    assert failed_execution.outcome is ExecutionOutcome.FAILURE
-    assert failed_execution.response.success is False
-    assert failed_execution.task.state == TaskState.FAILED
+    assert run_result.task.state == TaskState.FAILED
+    assert run_result.stopped_early is True
 
     recovery_decision = recovery_service.plan_recovery(
-        failed_execution.task,
+        run_result.task,
     )
     # The current classifier treats an unrecognized failure as UNKNOWN.
     # That must not become a blind retry.

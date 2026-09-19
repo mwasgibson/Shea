@@ -206,6 +206,12 @@ def risk_engine() -> RiskEngine:
     return RiskEngine()
 
 
+from shea.decision.pending import PendingConfirmationStore
+
+@pytest.fixture
+def pending_confirmations() -> PendingConfirmationStore:
+    return PendingConfirmationStore()
+
 @pytest.fixture
 def decision_service(
     policy_engine: PolicyEngine,
@@ -219,6 +225,7 @@ def decision_service(
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
     unit_of_work: SqliteUnitOfWork,
+    pending_confirmations: PendingConfirmationStore,
 ) -> DecisionService:
     return DecisionService(
         policy_engine=policy_engine,
@@ -232,6 +239,7 @@ def decision_service(
         clock=clock,
         id_generator=id_generator,
         unit_of_work=unit_of_work,
+        pending_confirmations=pending_confirmations,
     )
 
 

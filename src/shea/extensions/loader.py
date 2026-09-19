@@ -55,7 +55,7 @@ class PluginLoader:
                 if manifest.isolation is IsolationMode.PROCESS:
                     handle = spawn_extension_host(manifest, entry)
                     self._handles.append(handle)
-                    apply_declarations(runtime, manifest, handle.declarations)
+                    apply_declarations(runtime, manifest, handle.declarations, handle=handle)
                     loaded.append(handle)
                 elif manifest.isolation is IsolationMode.INPROCESS:
                     if not self.allow_inprocess:

@@ -47,6 +47,13 @@ class ProcessExtensionHandle:
         if not resp.get("ok"):
             raise RuntimeError(resp.get("error") or "extension host error")
         return resp.get("result") or {}
+    
+    def invoke_tool(self, tool: str, action: str, arguments: dict[str, Any]) -> Any:
+        result = self._rpc(
+            "invoke_tool",
+            {"tool": tool, "action": action, "arguments": arguments},
+        )
+        return result.get("output")
 
 
 def spawn_extension_host(

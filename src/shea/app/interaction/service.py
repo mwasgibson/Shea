@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from shea.contracts.enums import TaskState
-from shea.contracts.models import Plan, Task
+from shea.contracts.models import Decision, Plan, Task
+from shea.core.orchestrator import Orchestrator
 from shea.execution.plan_runner import PlanRunner, PlanRunResult
 from shea.observability.context import active_context
 from shea.planning.service import PlanningOutcome, PlanningService
@@ -13,10 +15,13 @@ from shea.planning.service import PlanningOutcome, PlanningService
 class InteractionResult:
     """One user request through planning + multi-step execution."""
 
-    planning: PlanningOutcome
+    planning: PlanningOutcome | None
     run: PlanRunResult | None
     task: Task
     error: str | None = None
+    pending_decision: Decision | None = None
+    needs_confirmation: bool = False
+    confirmation: dict[str, Any] | None = None
 
 
 class InteractionService:
@@ -31,9 +36,11 @@ class InteractionService:
         *,
         planning_service: PlanningService,
         plan_runner: PlanRunner,
+        orchestrator: Orchestrator,
     ) -> None:
         self._planning = planning_service
         self._runner = plan_runner
+        self._orchestrator = orchestrator
 
     def handle_text(
         self,
@@ -60,7 +67,7 @@ class InteractionService:
 
             from shea.contracts.models import Intent, Task
             from shea.planning.service import PlanningOutcome
-            
+
             # Bare minimum synthetic task just to hold the error state
             task_id = uuid.uuid4().hex
             synthetic_task = Task(
@@ -105,9 +112,32 @@ class InteractionService:
             )
         except Exception as e:
             # Catch catastrophic adapter crashes (e.g. C-level segfaults wrapped in RuntimeError)
+            from shea.decision.exceptions import AuthorizationRequiredError
+            if isinstance(e, AuthorizationRequiredError):
+                return InteractionResult(
+                    planning=planning,
+                    run=None,
+                    task=task,
+                    error="authorization_required",
+                    pending_decision=e.decision,
+                )
             return InteractionResult(
-                planning=planning,
-                run=None,
-                task=task,
-                error=f"Critical failure during execution: {e}"
+                planning=planning, run=None, task=task,
+                error=f"Critical failure during execution: {e}",
             )
+
+    def confirm_and_run(
+        self,
+        task_id: str,
+        *,
+        actor: str = "user",
+        explicit_user_ack: bool = True,
+    ) -> InteractionResult:
+        task: Task = self._orchestrator.get_task(task_id)
+        result = self._runner.run(task, acting_user=actor, explicit_user_ack=explicit_user_ack)
+        return InteractionResult(
+            planning=None,
+            run=result,
+            task=result.task,
+            needs_confirmation=False,
+        )

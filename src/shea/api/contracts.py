@@ -20,6 +20,10 @@ class ChatResponse(BaseModel):
     """A single atomic text response from the agent (for non-streaming interactions)."""
     text: str = Field(..., description="The response text.")
     session_id: str = Field(..., description="The interaction session ID.")
+    task_id: str | None = None
+    needs_confirmation: bool = False
+    confirmation: dict[str, Any] | None = None
+    state: str | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -85,3 +89,9 @@ class ProfileUpsertRequest(BaseModel):
     name: str
     preferences: dict[str, Any] = Field(default_factory=dict)
     context_rules: dict[str, str] = Field(default_factory=dict)
+
+
+class ConfirmRequest(BaseModel):
+    task_id: str
+    actor: str = "user"
+    acknowledge: bool = True

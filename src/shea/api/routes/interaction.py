@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
-from shea.api.contracts import ChatRequest, ChatResponse
+from shea.api.contracts import ChatRequest, ChatResponse, ConfirmRequest
 from shea.bootstrap import SheaRuntime
 from shea.events.contracts import Event
 
@@ -28,31 +28,83 @@ async def submit_chat(
     background_tasks: BackgroundTasks,
 ) -> ChatResponse:
     """Submit a chat message via the core InteractionService pipeline.
-    
-    The API must never bypass the existing pipeline (Text -> Intent -> Plan -> Execute).
+
+    The API must never bypass the existing pipeline (Text → Intent → Plan → Execute).
     We dispatch this synchronously to the InteractionService so it flows through the exact
     same execution and security paths as the CLI.
     """
-    
+    session_id: str = payload.session_id or uuid4().hex
+    profile_id: str = payload.profile_id or "default"
+
     def run_pipeline() -> None:
-        profile_id = payload.profile_id or "default"
         # Using interaction_service.handle_text enforces the full cognition pipeline
         runtime.interaction_service.handle_text(
             text=payload.message,
-            session_id=payload.session_id or uuid4().hex,
+            session_id=session_id,
             profile_id=profile_id,
-            explicit_user_ack=False, # Wait, for API, do we block on ack? Assuming auto-run or event-based ack for now
+            explicit_user_ack=False,
+            actor="api-user",
+            run=True,
         )
-        
+
     # In a fully asynchronous core we would await this.
-    # For our synchronous architectural core, we run it in a background thread 
+    # For our synchronous architectural core, we run it in a background thread
     # to avoid blocking the ASGI event loop, while live logs stream out via SSE.
     background_tasks.add_task(run_pipeline)
-    
+
     return ChatResponse(
-        text="Processing via InteractionService. Connect to /api/interaction/stream for updates.",
-        session_id=payload.session_id or "new",
+        text="Accepted. Watch /api/interaction/stream.",
+        session_id=session_id,
+        task_id=None,
+        needs_confirmation=False,
+        confirmation=None,
+        state=None,
     )
+
+
+@router.post("/confirm", response_model=ChatResponse)
+async def confirm_task(
+    payload: ConfirmRequest,
+    runtime: Annotated[SheaRuntime, Depends(get_runtime)],
+) -> ChatResponse:
+    pending = runtime.pending_confirmations.pop(payload.task_id)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="no pending confirmation for task")
+    if not payload.acknowledge:
+        runtime.orchestrator.advance(payload.task_id, "cancel")
+        return ChatResponse(
+            text="Cancelled by user.",
+            session_id=pending.session_id,
+            task_id=payload.task_id,
+            state="CANCELLED",
+        )
+
+    result = runtime.interaction_service.confirm_and_run(
+        payload.task_id, actor=payload.actor, explicit_user_ack=True
+    )
+    return ChatResponse(
+        text="Confirmed and running." if result.error is None else result.error,
+        session_id=pending.session_id,
+        task_id=payload.task_id,
+        state=result.task.state.value,
+    )
+
+
+@router.get("/pending")
+async def list_pending(
+    session_id: str,
+    runtime: Annotated[SheaRuntime, Depends(get_runtime)],
+) -> list[dict[str, Any]]:
+    items = runtime.pending_confirmations.list_for_session(session_id)
+    return [
+        {
+            "task_id": p.task_id,
+            "risk": p.risk,
+            "explanation": p.explanation,
+            "capabilities": p.capabilities,
+        }
+        for p in items
+    ]
 
 
 @router.get("/stream")
