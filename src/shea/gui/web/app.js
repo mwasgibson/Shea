@@ -1,540 +1,578 @@
-(() => {
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => [...document.querySelectorAll(sel)];
+/* SHEA Control Console — InteractionService only; no secrets in UI */
 
-  const state = {
-    tasks: new Map(), // id -> { id, lastAction, result, updatedAt, note }
-    events: [],
-    memories: [],
-    credentials: [],
-  };
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
 
-  // ── Navigation ────────────────────────────────────
-  $$("#nav button").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      $$("#nav button").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      const view = btn.dataset.view;
-      $$(".view").forEach((v) => v.classList.remove("active"));
-      $(`#view-${view}`).classList.add("active");
-      if (view === "memory") loadMemories();
-      if (view === "audit" || view === "tasks") loadAudit();
-      if (view === "dashboard") refreshDashboard();
-      if (view === "vault") loadVault();
+const state = {
+  stages: {
+    intent: false,
+    plan: false,
+    policy: false,
+    authorize: false,
+    execute: false,
+    verify: false,
+  },
+  events: [],
+};
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function shortId(id) {
+  if (!id) return "—";
+  return id.length > 14 ? id.slice(0, 10) + "…" : id;
+}
+function fmtTime(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return String(iso);
+  }
+}
+
+/* nav */
+$$(".nav-item").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    $$(".nav-item").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const v = btn.dataset.view;
+    $$(".view").forEach((el) => el.classList.remove("active"));
+    $(`#view-${v}`)?.classList.add("active");
+    const loaders = {
+      tasks: loadTasks,
+      pending: loadPending,
+      memory: loadMemories,
+      vault: loadVault,
+      profiles: loadProfiles,
+      tools: loadTools,
+      audit: loadAudit,
+      system: refreshSystem,
+    };
+    loaders[v]?.();
+  });
+});
+
+/* pipeline */
+function renderPipeline() {
+  $$("#pipeline .stage").forEach((el) => {
+    el.classList.toggle("on", !!state.stages[el.dataset.stage]);
+    el.classList.toggle("ok", !!state.stages[el.dataset.stage]);
+  });
+}
+function resetPipeline() {
+  Object.keys(state.stages).forEach((k) => (state.stages[k] = false));
+  renderPipeline();
+}
+function inferStages(type, message) {
+  const t = `${type} ${message}`.toLowerCase();
+  if (/intent|understand/.test(t)) state.stages.intent = true;
+  if (/plan/.test(t)) state.stages.plan = true;
+  if (/policy|decision|risk/.test(t)) state.stages.policy = true;
+  if (/authoriz|confirm/.test(t)) state.stages.authorize = true;
+  if (/execut|tool|adapter/.test(t)) state.stages.execute = true;
+  if (/verif|complete/.test(t)) state.stages.verify = true;
+  renderPipeline();
+}
+
+/* chat */
+function appendMsg(role, text, extraHtml = "") {
+  const log = $("#chat-log");
+  const div = document.createElement("div");
+  div.className = `msg ${role}`;
+  let bodyContent = escapeHtml(text);
+  if (role === "agent" && typeof marked !== "undefined") {
+    bodyContent = marked.parse(text);
+  }
+  div.innerHTML = `<div class="role">${role}</div><div class="body markdown-body">${bodyContent}</div>${extraHtml}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendChat() {
+  const input = $("#chat-input");
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = "";
+  appendMsg("user", message);
+  resetPipeline();
+  state.stages.intent = true;
+  renderPipeline();
+
+  try {
+    const res = await fetch("/api/interaction/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        session_id: $("#chat-session")?.value || "web-console",
+        profile_id: $("#chat-profile")?.value || "default",
+      }),
     });
-  });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
-  // ── Chat helpers ──────────────────────────────────
-  const history = $("#chat-history");
-  function appendMsg(role, text, html) {
-    const el = document.createElement("div");
-    el.className = `msg ${role}`;
-    if (html) el.innerHTML = html;
-    else el.textContent = text;
-    history.appendChild(el);
-    history.scrollTop = history.scrollHeight;
-    return el;
-  }
-
-  appendMsg(
-    "system",
-    "Requests enter InteractionService only. The GUI never calls ToolExecutor or reads vault secrets.",
-  );
-
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
-  const stages = $$(".stage");
-  function resetPipeline() {
-    stages.forEach((s) => s.classList.remove("ok", "fail", "run"));
-  }
-  function markStage(name, cls) {
-    const el = stages.find((s) => s.dataset.stage === name);
-    if (!el) return;
-    el.classList.remove("ok", "fail", "run");
-    if (cls) el.classList.add(cls);
-  }
-  function inferStages(type) {
-    const t = String(type || "").toLowerCase();
-    if (t.includes("intent") || t.includes("request"))
-      markStage("intent", "ok");
-    if (t.includes("plan"))
-      markStage("plan", t.includes("fail") ? "fail" : "ok");
-    if (t.includes("policy") || t.includes("decision"))
-      markStage("policy", t.includes("den") ? "fail" : "ok");
-    if (t.includes("auth")) markStage("authorize", "ok");
-    if (t.includes("execut") || t.includes("tool"))
-      markStage("execute", t.includes("fail") ? "fail" : "run");
-    if (t.includes("verif"))
-      markStage("verify", t.includes("fail") ? "fail" : "ok");
-    if (t.includes("security") || t.includes("halt")) {
-      markStage("policy", "fail");
-      markStage("execute", "fail");
+    if (data.needs_confirmation) {
+      state.stages.policy = true;
+      state.stages.authorize = true;
+      renderPipeline();
+      const taskId = data.task_id || data.confirmation?.task_id || "";
+      const extra = `
+        <div class="confirm-card" style="margin-top:10px">
+          <h3>Confirmation required</h3>
+          <div class="body">Task ${escapeHtml(shortId(taskId))} needs explicit acknowledgement before execution.</div>
+          <div class="confirm-actions">
+            <button class="btn primary" data-confirm="${escapeHtml(taskId)}">Confirm</button>
+            <button class="btn danger" data-deny="${escapeHtml(taskId)}">Deny</button>
+          </div>
+        </div>`;
+      appendMsg("system", data.text || "Confirmation required", extra);
+      extra && bindConfirmButtons();
+      loadPending();
+    } else {
+      appendMsg("system", data.text || "Accepted");
+      if (data.task_id)
+        appendMsg("system", `task ${data.task_id} · ${data.state || ""}`);
     }
-    if (t.includes("completed") || t.includes("success")) {
-      markStage("execute", "ok");
-      markStage("verify", "ok");
-    }
+  } catch (err) {
+    appendMsg("system", `Error: ${err.message}`);
   }
+}
 
-  $("#hints").addEventListener("click", (e) => {
-    const h = e.target.closest(".hint");
-    if (!h) return;
-    $("#chat-input").value = h.dataset.text || "";
-    $("#chat-input").focus();
-  });
-
-  $("#chat-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const text = $("#chat-input").value.trim();
-    if (!text) return;
-    appendMsg("user", text);
-    $("#chat-input").value = "";
-    resetPipeline();
-    markStage("intent", "run");
-    $("#send-btn").disabled = true;
-    try {
-      const res = await fetch("/api/interaction/chat", {
+function bindConfirmButtons() {
+  $$("[data-confirm]").forEach((btn) => {
+    btn.onclick = async () => {
+      const task_id = btn.dataset.confirm;
+      const res = await fetch("/api/interaction/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, profile_id: "default" }),
+        body: JSON.stringify({ task_id, actor: "web-user", acknowledge: true }),
       });
-      const data = await res.json();
-      appendMsg("system", data.text || "Processing via InteractionService…");
-    } catch (err) {
-      console.error(err);
-      appendMsg("system", "Failed to reach API.");
-      markStage("intent", "fail");
-    } finally {
-      $("#send-btn").disabled = false;
-    }
-  });
-
-  // ── Tasks from events/audit ───────────────────────
-  function upsertTask(id, patch) {
-    if (!id) return;
-    const prev = state.tasks.get(id) || {
-      id,
-      lastAction: "—",
-      result: "—",
-      updatedAt: Date.now(),
-      note: "",
+      const data = await res.json().catch(() => ({}));
+      appendMsg(
+        "system",
+        data.text || (res.ok ? "Confirmed" : "Confirm failed"),
+      );
+      loadPending();
     };
-    state.tasks.set(id, { ...prev, ...patch, updatedAt: Date.now() });
-    renderTasks();
-    $("#count-tasks").textContent = String(state.tasks.size);
-  }
+  });
+  $$("[data-deny]").forEach((btn) => {
+    btn.onclick = async () => {
+      const task_id = btn.dataset.deny;
+      const res = await fetch("/api/interaction/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_id,
+          actor: "web-user",
+          acknowledge: false,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      appendMsg("system", data.text || (res.ok ? "Denied" : "Deny failed"));
+      loadPending();
+    };
+  });
+}
 
-  function renderTasks() {
-    const list = $("#task-list");
-    const rows = [...state.tasks.values()].sort(
-      (a, b) => b.updatedAt - a.updatedAt,
-    );
+$("#chat-send")?.addEventListener("click", sendChat);
+$("#chat-input")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendChat();
+});
+
+/* SSE */
+function connectSSE() {
+  const es = new EventSource("/api/interaction/stream");
+  es.onopen = () => {
+    $("#sse-dot")?.classList.add("ok");
+    if ($("#sse-label")) $("#sse-label").textContent = "stream live";
+  };
+  es.onerror = () => {
+    $("#sse-dot")?.classList.remove("ok");
+    if ($("#sse-label")) $("#sse-label").textContent = "stream reconnecting";
+  };
+  es.onmessage = (ev) => {
+    let payload = {};
+    try {
+      payload = JSON.parse(ev.data);
+    } catch {
+      payload = { message: ev.data };
+    }
+    const type = payload.type || payload.event || "event";
+    const message =
+      payload.message ||
+      payload.detail ||
+      JSON.stringify(payload).slice(0, 200);
+    pushEvent(type, message);
+    inferStages(type, message);
+  };
+
+  ["execution.started", "execution.completed", "execution.failed"].forEach(
+    (name) => {
+      es.addEventListener(name, (ev) => {
+        let payload = {};
+        try {
+          payload = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        pushEvent(name, JSON.stringify(payload).slice(0, 200));
+        inferStages(name, "");
+
+        if (name === "execution.completed" && payload.tool === "system.reply") {
+          appendMsg("agent", payload.data);
+        }
+      });
+    },
+  );
+}
+function pushEvent(type, message) {
+  state.events.unshift({ ts: new Date().toISOString(), type, message });
+  if (state.events.length > 200) state.events.pop();
+  renderEvents();
+}
+function renderEvents() {
+  const feed = $("#events-feed");
+  if (!feed) return;
+  if (!state.events.length) {
+    feed.innerHTML = `<div class="empty">Waiting for SSE…</div>`;
+    return;
+  }
+  feed.innerHTML = state.events
+    .map(
+      (e) => `<div class="event-line">
+        <span class="event-ts">${escapeHtml(fmtTime(e.ts))}</span>
+        <span class="event-type">${escapeHtml(e.type)}</span>
+        <span>${escapeHtml(e.message)}</span>
+      </div>`,
+    )
+    .join("");
+}
+
+/* tasks */
+async function loadTasks() {
+  const body = $("#tasks-body");
+  if (!body) return;
+  body.innerHTML = `<tr><td colspan="5">Loading…</td></tr>`;
+  try {
+    const res = await fetch("/api/tasks/?limit=100");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
     if (!rows.length) {
-      list.innerHTML = `<div class="empty">No tasks yet. Send a chat request to start the pipeline.</div>`;
+      body.innerHTML = `<tr><td colspan="5">No tasks</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows
+      .map(
+        (t) => `<tr>
+          <td class="mono" title="${escapeHtml(t.id)}">${escapeHtml(shortId(t.id))}</td>
+          <td><span class="pill">${escapeHtml(t.state)}</span></td>
+          <td>${escapeHtml(t.session_id || "—")}</td>
+          <td class="mono">${escapeHtml(shortId(t.plan_id))}</td>
+          <td>${escapeHtml(fmtTime(t.updated_at))}</td>
+        </tr>`,
+      )
+      .join("");
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="5">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+$("#tasks-refresh")?.addEventListener("click", loadTasks);
+
+/* pending */
+async function loadPending() {
+  const list = $("#pending-list");
+  const session = $("#chat-session")?.value || "web-console";
+  try {
+    const res = await fetch(
+      `/api/interaction/pending?session_id=${encodeURIComponent(session)}`,
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    const badge = $("#pending-badge");
+    if (badge) {
+      badge.textContent = String(rows.length);
+      badge.classList.toggle("hidden", rows.length === 0);
+    }
+    if (!list) return;
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty">No pending confirmations for this session.</div>`;
       return;
     }
     list.innerHTML = rows
-      .map((t) => {
-        const badge = /success|completed|ok/i.test(t.result)
-          ? "ok"
-          : /fail|denied|halt|flag/i.test(t.result)
-            ? "fail"
-            : /run|process|start/i.test(t.result)
-              ? "run"
-              : "";
-        return `<div class="row">
-          <div>
-            <div class="title">${escapeHtml(t.lastAction)}</div>
-            <div class="detail">${escapeHtml(t.note || "")}</div>
-            <div class="mono">${escapeHtml(t.id)}</div>
-          </div>
-          <span class="badge ${badge}">${escapeHtml(t.result)}</span>
-        </div>`;
-      })
-      .join("");
-  }
-
-  // ── Events ────────────────────────────────────────
-  function pushEvent(kind, payload, taskId) {
-    const item = {
-      at: new Date(),
-      kind,
-      payload:
-        typeof payload === "string"
-          ? payload
-          : JSON.stringify(payload ?? {}, null, 0),
-      taskId: taskId || null,
-    };
-    state.events.unshift(item);
-    state.events = state.events.slice(0, 200);
-    $("#count-events").textContent = String(state.events.length);
-    renderEvents();
-    if (taskId) {
-      upsertTask(taskId, {
-        lastAction: kind,
-        result: kind,
-        note: item.payload.slice(0, 160),
-      });
-    }
-  }
-
-  function renderEvents() {
-    const feed = $("#event-feed");
-    if (!state.events.length) {
-      feed.innerHTML = `<div class="empty">Waiting for SSE events…</div>`;
-      return;
-    }
-    feed.innerHTML = state.events
       .map(
-        (e) => `<div class="event-line">
-          <time>${e.at.toLocaleTimeString()}</time>
-          <div>
-            <div class="kind">${escapeHtml(e.kind)}</div>
-            <div class="payload">${escapeHtml(e.payload)}</div>
+        (p) => `<div class="item-card">
+          <div class="item-title">Task ${escapeHtml(shortId(p.task_id))} · risk ${escapeHtml(p.risk || "—")}</div>
+          <div class="item-body">${escapeHtml(p.explanation || "")}</div>
+          <div class="item-meta">
+            <span class="mono">${escapeHtml(p.task_id)}</span>
+            <span>${(p.capabilities || []).map(escapeHtml).join(", ")}</span>
+            <button class="btn primary" data-confirm="${escapeHtml(p.task_id)}">Confirm</button>
+            <button class="btn danger" data-deny="${escapeHtml(p.task_id)}">Deny</button>
           </div>
         </div>`,
       )
       .join("");
+    bindConfirmButtons();
+  } catch (err) {
+    if (list)
+      list.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
   }
+}
+$("#pending-refresh")?.addEventListener("click", loadPending);
 
-  $("#btn-clear-events").addEventListener("click", () => {
-    state.events = [];
-    $("#count-events").textContent = "0";
-    renderEvents();
-  });
-
-  // ── SSE ───────────────────────────────────────────
-  function connectSSE() {
-    const es = new EventSource("/api/interaction/stream");
-    const pill = $("#status-pill");
-
-    es.onopen = () => {
-      pill.textContent = "Online";
-      pill.className = "pill online";
-    };
-    es.onerror = () => {
-      pill.textContent = "Offline";
-      pill.className = "pill offline";
-      es.close();
-      setTimeout(connectSSE, 3000);
-    };
-
-    const handle = (type, raw) => {
-      let payload = raw;
-      try {
-        payload = typeof raw === "string" ? JSON.parse(raw) : raw;
-      } catch {
-        /* keep string */
-      }
-      const kind = type || payload?.event || "message";
-      const taskId =
-        payload?.task_id || payload?.taskId || payload?.data?.task_id || null;
-      inferStages(kind);
-      pushEvent(kind, payload?.data ?? payload, taskId);
-
-      if (
-        /tool/i.test(kind) ||
-        payload?.tool ||
-        payload?.event === "ToolExecutionRecord"
-      ) {
-        const body =
-          typeof payload?.data === "string"
-            ? payload.data
-            : JSON.stringify(payload?.data ?? payload, null, 2);
-        if (payload?.tool === "system.reply") {
-          appendMsg("agent", escapeHtml(body));
-        } else {
-          appendMsg(
-            "agent",
-            "",
-            `<div class="meta">${escapeHtml(kind)}</div><strong>Tool</strong><div class="tool-block">${escapeHtml(body)}</div>`,
-          );
-        }
-        markStage("execute", "run");
-        return;
-      }
-      if (payload?.text || payload?.message) {
-        appendMsg("agent", payload.text || payload.message);
-      } else if (/plan|task|verif|security|auth|policy/i.test(kind)) {
-        appendMsg("system", kind);
-      }
-    };
-
-    es.onmessage = (ev) => handle(ev.type || "message", ev.data);
-
-    [
-      "PlanStepCompleted",
-      "PlanCompleted",
-      "ToolExecutionRecord",
-      "task.state_changed",
-      "task.created",
-      "task.error",
-      "security.violation",
-      "policy.denied",
-      "authorization.granted",
-      "memory.stored",
-      "memory.deleted",
-      "execution.started",
-      "execution.completed",
-      "execution.failed",
-      "execution.suppressed",
-    ].forEach((name) => {
-      es.addEventListener(name, (ev) => handle(name, ev.data));
+/* memory */
+async function loadMemories() {
+  const list = $("#memory-list");
+  const profile = $("#memory-profile")?.value || "default";
+  if (!list) return;
+  try {
+    const res = await fetch(
+      `/api/memory/?profile_id=${encodeURIComponent(profile)}`,
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty">No active memories.</div>`;
+      return;
+    }
+    list.innerHTML = rows
+      .map(
+        (m) => `<div class="item-card">
+          <div class="item-title">${escapeHtml(m.type)} · ${escapeHtml(m.source)}</div>
+          <div class="item-body">${escapeHtml(m.content)}</div>
+          <div class="item-meta">
+            <span>${escapeHtml(fmtTime(m.created_at))}</span>
+            <button class="btn danger" data-del-mem="${escapeHtml(m.id)}">Delete</button>
+          </div>
+        </div>`,
+      )
+      .join("");
+    $$("[data-del-mem]").forEach((b) => {
+      b.onclick = async () => {
+        await fetch(`/api/memory/${b.dataset.delMem}`, { method: "DELETE" });
+        loadMemories();
+      };
     });
+  } catch (err) {
+    list.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
   }
+}
+$("#memory-refresh")?.addEventListener("click", loadMemories);
 
-  // ── Memory ────────────────────────────────────────
-  async function loadMemories() {
-    const list = $("#memory-list");
-    try {
-      const res = await fetch("/api/memory/?profile_id=default");
-      const memories = await res.json();
-      state.memories = Array.isArray(memories) ? memories : [];
-      $("#count-memory").textContent = String(state.memories.length);
-      if (!state.memories.length) {
-        list.innerHTML = `<div class="empty">No active memories.</div>`;
-        return;
-      }
-      list.innerHTML = state.memories
+/* vault */
+async function loadVault() {
+  const list = $("#vault-list");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/credentials/");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty">No credential references.</div>`;
+      return;
+    }
+    list.innerHTML = rows
+      .map(
+        (c) => `<div class="item-card">
+          <div class="item-title">${escapeHtml(c.name)}</div>
+          <div class="item-body">${escapeHtml(c.description || "—")}</div>
+          <div class="item-meta">
+            <span>profile ${escapeHtml(c.profile_id)}</span>
+            <span>${(c.allowed_tools || []).map(escapeHtml).join(", ")}</span>
+            <button class="btn danger" data-rev="${escapeHtml(c.id)}">Revoke</button>
+          </div>
+        </div>`,
+      )
+      .join("");
+    $$("[data-rev]").forEach((b) => {
+      b.onclick = async () => {
+        await fetch(`/api/credentials/${b.dataset.rev}`, { method: "DELETE" });
+        loadVault();
+      };
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+$("#vault-refresh")?.addEventListener("click", loadVault);
+$("#vault-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const allowed = String(fd.get("allowed_tools") || "*")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const res = await fetch("/api/credentials/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: fd.get("name"),
+      secret: fd.get("secret"),
+      profile_id: fd.get("profile_id") || "default",
+      description: fd.get("description") || "",
+      allowed_tools: allowed,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.detail || `HTTP ${res.status}`);
+    return;
+  }
+  e.target.reset();
+  loadVault();
+});
+
+/* profiles */
+async function loadProfiles() {
+  const list = $("#profiles-list");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/profiles/");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty">No profiles.</div>`;
+      return;
+    }
+    list.innerHTML = rows
+      .map(
+        (p) => `<div class="item-card">
+          <div class="item-title">${escapeHtml(p.name)} <span class="mono">${escapeHtml(p.id)}</span></div>
+          <div class="item-body"><pre>${escapeHtml(JSON.stringify(p.context_rules || {}, null, 2))}</pre></div>
+        </div>`,
+      )
+      .join("");
+  } catch (err) {
+    list.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+$("#profiles-refresh")?.addEventListener("click", loadProfiles);
+$("#profile-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const id = String(fd.get("id"));
+  let rules = {};
+  try {
+    rules = JSON.parse(String(fd.get("context_rules") || "{}"));
+  } catch {
+    alert("Invalid JSON");
+    return;
+  }
+  const res = await fetch(`/api/profiles/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id,
+      name: fd.get("name"),
+      preferences: {},
+      context_rules: rules,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.detail || `HTTP ${res.status}`);
+    return;
+  }
+  loadProfiles();
+});
+
+/* tools — graceful if route missing */
+async function loadTools() {
+  const body = $("#tools-body");
+  const empty = $("#tools-empty");
+  try {
+    const res = await fetch("/api/tools/");
+    if (res.status === 404) {
+      empty?.classList.remove("hidden");
+      if (body) body.innerHTML = "";
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    empty?.classList.add("hidden");
+    const rows = await res.json();
+    if (!body) return;
+    body.innerHTML =
+      (rows || [])
         .map(
-          (m) => `<div class="row">
-            <div>
-              <div class="title">${escapeHtml(m.content || "")}</div>
-              <div class="detail">${escapeHtml(m.type || "memory")} · confidence ${(m.confidence ?? 0).toFixed?.(2) ?? m.confidence} · ${escapeHtml(m.source || "")}</div>
-              <div class="mono">${escapeHtml(m.id)}</div>
-            </div>
-            <button type="button" class="btn sm danger" data-del="${escapeHtml(m.id)}">Delete</button>
-          </div>`,
+          (t) => `<tr>
+          <td class="mono">${escapeHtml(t.name)}</td>
+          <td>${(t.capabilities || []).map((c) => `<span class="pill">${escapeHtml(c)}</span>`).join(" ")}</td>
+          <td>${escapeHtml(t.description || "")}</td>
+        </tr>`,
         )
-        .join("");
-    } catch (err) {
-      console.error(err);
-      list.innerHTML = `<div class="empty">Memory API unavailable.</div>`;
-    }
+        .join("") || `<tr><td colspan="3">No tools registered</td></tr>`;
+  } catch (err) {
+    empty?.classList.remove("hidden");
+    if (body) body.innerHTML = "";
   }
+}
+$("#tools-refresh")?.addEventListener("click", loadTools);
 
-  $("#memory-list").addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-del]");
-    if (!btn) return;
-    const id = btn.getAttribute("data-del");
-    try {
-      await fetch(`/api/memory/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
-      await loadMemories();
-      pushEvent("memory.deleted", { id }, null);
-    } catch (err) {
-      console.error(err);
-    }
-  });
-  $("#btn-refresh-memory").addEventListener("click", loadMemories);
-
-  // ── Vault (optional route) ────────────────────────
-  async function loadVault() {
-    const list = $("#vault-list");
-    try {
-      const res = await fetch("/api/credentials/");
-      if (!res.ok) throw new Error(String(res.status));
-      const rows = await res.json();
-      state.credentials = Array.isArray(rows) ? rows : [];
-      if (!state.credentials.length) {
-        list.innerHTML = `<div class="empty">No credential references registered.</div>`;
-        return;
-      }
-      list.innerHTML = state.credentials
-        .map((c) => {
-          const ops = (c.operations || c.allowed_operations || []).join(", ");
-          return `<div class="row">
-            <div>
-              <div class="title">${escapeHtml(c.label || c.id)}</div>
-              <div class="detail">destination <code>${escapeHtml(c.destination || "—")}</code> · ops ${escapeHtml(ops || "—")} · lifetime ${escapeHtml(String(c.lifetime_seconds ?? c.lifetimeSeconds ?? "—"))}s</div>
-              <div class="mono">${escapeHtml(c.id)}</div>
-            </div>
-            <span class="badge ${c.revoked ? "fail" : "ok"}">${c.revoked ? "revoked" : "active"}</span>
-          </div>`;
-        })
-        .join("");
-    } catch {
-      list.innerHTML = `<div class="empty">
-        Credential list API not mounted yet (<code>/api/credentials/</code>).<br/>
-        Core vault exists in <code>shea.credentials</code> — expose references only when you add the route.
-        GUI will never display secret material.
-      </div>`;
-    }
+/* audit */
+async function loadAudit() {
+  const body = $("#audit-body");
+  if (!body) return;
+  try {
+    const res = await fetch("/api/observability/audit?limit=100");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const events = data.events || [];
+    body.innerHTML =
+      events
+        .map(
+          (e) => `<tr>
+          <td class="mono">${escapeHtml(String(e.sequence_number ?? "—"))}</td>
+          <td>${escapeHtml(fmtTime(e.timestamp || e.created_at))}</td>
+          <td>${escapeHtml(e.event_type || e.type || "—")}</td>
+          <td class="mono">${escapeHtml(shortId(e.task_id))}</td>
+          <td>${escapeHtml(e.actor || "—")}</td>
+        </tr>`,
+        )
+        .join("") || `<tr><td colspan="5">No events</td></tr>`;
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="5">${escapeHtml(err.message)}</td></tr>`;
   }
-  $("#btn-refresh-vault").addEventListener("click", loadVault);
+}
+$("#audit-refresh")?.addEventListener("click", loadAudit);
 
-  // ── Audit ─────────────────────────────────────────
-  async function loadAudit() {
-    try {
-      const res = await fetch("/api/observability/audit?limit=50");
-      const data = await res.json();
-      const events = data.events || [];
-      const body = $("#audit-body");
-      body.innerHTML = events
-        .map((ev) => {
-          const result = (ev.result || "—").toString();
-          let color = "var(--fg-muted)";
-          if (/success/i.test(result)) color = "var(--success)";
-          if (/fail|flag|denied|halt/i.test(result)) color = "var(--danger)";
-          if (ev.task_id) {
-            upsertTask(ev.task_id, {
-              lastAction: ev.action || ev.component || "event",
-              result,
-              note: ev.component || "",
-            });
-          }
-          return `<tr>
-            <td>${ev.sequence_number ?? "—"}</td>
-            <td>${ev.timestamp ? new Date(ev.timestamp).toLocaleString() : "—"}</td>
-            <td>${escapeHtml(ev.component || "—")}</td>
-            <td><code>${escapeHtml(ev.action || "—")}</code></td>
-            <td style="color:${color};font-weight:600">${escapeHtml(result.toUpperCase())}</td>
-            <td class="mono" style="font-size:11px">${escapeHtml(ev.task_id || "—")}</td>
-          </tr>`;
-        })
-        .join("");
-      renderTasks();
-    } catch (err) {
-      console.error(err);
-    }
+/* system metrics */
+async function refreshSystem() {
+  try {
+    const res = await fetch("/api/observability/metrics");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const m = await res.json();
+    $("#m-cpu").textContent = `${m.cpu_percent ?? 0}%`;
+    $("#m-load").textContent = `load ${m.load_1m ?? 0}`;
+    $("#m-ram").textContent = `${m.ram_percent ?? 0}%`;
+    $("#m-ram-detail").textContent =
+      `${m.ram_used_mb ?? 0} / ${m.ram_total_mb ?? 0} MB`;
+    $("#m-disk").textContent = `${m.disk_percent ?? 0}%`;
+    $("#m-disk-detail").textContent =
+      `${m.disk_used_gb ?? 0} / ${m.disk_total_gb ?? 0} GB`;
+    $("#m-prov").textContent = `${m.provider_health ?? "—"}`;
+    $("#m-rpm").textContent = `${m.requests_per_minute ?? 0}`;
+    $("#m-budget").textContent =
+      `${Math.round((m.rate_limit_remaining ?? 1) * 100)}%`;
+    $("#m-rl-hits").textContent = `${m.rate_limit_hits ?? 0} limit hits`;
+    $("#m-active").textContent = `${m.active_tasks ?? 0}`;
+    $("#m-sec").textContent = `${m.security_blocks ?? 0}`;
+    $("#m-intents").textContent = `${m.total_intents ?? 0}`;
+    $("#m-tools").textContent = `${m.total_tools_executed ?? 0}`;
+    $("#m-rate").textContent =
+      `${((m.tool_success_rate ?? 0) * 100).toFixed(1)}%`;
+    $("#m-avg").textContent = `${(m.avg_tool_duration_ms ?? 0).toFixed(0)} ms`;
+  } catch {
+    $("#m-cpu").textContent = "—";
   }
-  $("#btn-refresh-audit").addEventListener("click", loadAudit);
-  $("#btn-refresh-tasks").addEventListener("click", loadAudit);
+}
+$("#sys-refresh")?.addEventListener("click", refreshSystem);
 
-  // ── Dashboard ─────────────────────────────────────
-  let successChart, latencyChart;
-  function initCharts() {
-    Chart.defaults.color = "#9aa3ad";
-    Chart.defaults.borderColor = "rgba(236,234,228,0.12)";
-    Chart.defaults.font.family = "'IBM Plex Sans', system-ui, sans-serif";
-    successChart = new Chart($("#chart-success").getContext("2d"), {
-      type: "doughnut",
-      data: {
-        labels: ["Success", "Failure"],
-        datasets: [
-          {
-            data: [0, 0],
-            backgroundColor: ["#6f9f7a", "#c07272"],
-            borderWidth: 0,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: "bottom" },
-          title: { display: true, text: "Tool outcomes", color: "#eceae4" },
-        },
-      },
-    });
-    latencyChart = new Chart($("#chart-latency").getContext("2d"), {
-      type: "line",
-      data: {
-        labels: [],
-        datasets: [
-          {
-            label: "Avg ms",
-            data: [],
-            borderColor: "#c5cdd6",
-            backgroundColor: "rgba(197,205,214,0.12)",
-            tension: 0.35,
-            fill: true,
-            pointRadius: 2,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          y: { beginAtZero: true, grid: { color: "rgba(236,234,228,0.08)" } },
-          x: { grid: { display: false } },
-        },
-        plugins: {
-          legend: { display: false },
-          title: { display: true, text: "Execution latency", color: "#eceae4" },
-        },
-      },
-    });
-  }
-
-  async function refreshDashboard() {
-    try {
-      const metricsRes = await fetch("/api/observability/metrics");
-      const metrics = await metricsRes.json();
-      $("#m-cpu").textContent = `${metrics.cpu_percent ?? 0}%`;
-      $("#m-load").textContent = `load ${metrics.load_1m ?? 0}`;
-      $("#m-ram").textContent = `${metrics.ram_percent ?? 0}%`;
-      $("#m-ram-detail").textContent =
-        `${metrics.ram_used_mb ?? 0} / ${metrics.ram_total_mb ?? 0} MB`;
-      $("#m-disk").textContent = `${metrics.disk_percent ?? 0}%`;
-      $("#m-disk-detail").textContent =
-        `${metrics.disk_used_gb ?? 0} / ${metrics.disk_total_gb ?? 0} GB`;
-      $("#m-prov").textContent = `${metrics.provider_health ?? 100}`;
-      $("#m-rpm").textContent = `${metrics.requests_per_minute ?? 0}`;
-      $("#m-budget").textContent =
-        `${Math.round((metrics.rate_limit_remaining ?? 1) * 100)}%`;
-      $("#m-rl-hits").textContent =
-        `${metrics.rate_limit_hits ?? 0} limit hits`;
-      $("#m-active").textContent = `${metrics.active_tasks ?? 0}`;
-      $("#m-sec").textContent = `${metrics.security_blocks ?? 0}`;
-      $("#m-intents").textContent = metrics.total_intents ?? 0;
-      $("#m-tools").textContent = metrics.total_tools_executed ?? 0;
-      $("#m-rate").textContent =
-        `${((metrics.tool_success_rate ?? 0) * 100).toFixed(1)}%`;
-      $("#m-avg").textContent =
-        `${(metrics.avg_tool_duration_ms ?? 0).toFixed(0)}`;
-
-      const total = metrics.total_tools_executed ?? 0;
-      const ok = Math.round(total * rate);
-      successChart.data.datasets[0].data = [ok, Math.max(0, total - ok)];
-      successChart.update();
-
-      const now = new Date().toLocaleTimeString();
-      if (latencyChart.data.labels.length > 12) {
-        latencyChart.data.labels.shift();
-        latencyChart.data.datasets[0].data.shift();
-      }
-      latencyChart.data.labels.push(now);
-      latencyChart.data.datasets[0].data.push(
-        metrics.avg_tool_duration_ms ?? 0,
-      );
-      latencyChart.update();
-
-      const auditRes = await fetch("/api/observability/audit?limit=12");
-      const auditData = await auditRes.json();
-      $("#dash-audit").innerHTML = (auditData.events || [])
-        .map((ev) => {
-          const result = (ev.result || "—").toString().toUpperCase();
-          return `<tr>
-            <td>${ev.sequence_number ?? "—"}</td>
-            <td><code>${escapeHtml(ev.action || "—")}</code></td>
-            <td>${escapeHtml(result)}</td>
-            <td style="font-family:var(--font-mono);font-size:11px">${escapeHtml(ev.task_id || "—")}</td>
-          </tr>`;
-        })
-        .join("");
-    } catch (err) {
-      console.error(err);
-    }
-  }
-  $("#btn-refresh-dash").addEventListener("click", refreshDashboard);
-
-  // ── Boot ──────────────────────────────────────────
-  initCharts();
-  connectSSE();
-  loadMemories();
-  loadAudit();
-  renderTasks();
-  renderEvents();
-  setInterval(() => {
-    if ($("#view-dashboard").classList.contains("active")) refreshDashboard();
-  }, 4000);
-})();
+connectSSE();
+refreshSystem();
+setInterval(refreshSystem, 8000);
+loadPending();

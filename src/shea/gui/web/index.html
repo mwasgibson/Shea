@@ -2,181 +2,313 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SHEA Console</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SHEA</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=3" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
-    <div id="app">
-      <aside id="rail">
-        <div class="rail-header">
-          <div class="brand">
-            <h1>SHEA</h1>
-            <p>Control console</p>
+    <div class="app">
+      <aside class="rail">
+        <div class="brand">
+          <div class="brand-mark">S</div>
+          <div>
+            <div class="brand-name">SHEA</div>
+            <div class="brand-sub">Control</div>
           </div>
-          <span id="status-pill" class="pill offline">Offline</span>
         </div>
-        <nav class="nav" id="nav">
-          <button type="button" data-view="chat" class="active">Chat</button>
-          <button type="button" data-view="tasks">
-            Tasks <span class="count" id="count-tasks">0</span>
+        <nav class="nav">
+          <div class="nav-section">Operate</div>
+          <button class="nav-item active" data-view="chat">Interaction</button>
+          <button class="nav-item" data-view="tasks">Tasks</button>
+          <button class="nav-item" data-view="pending">
+            Confirmations <span class="badge hidden" id="pending-badge">0</span>
           </button>
-          <button type="button" data-view="memory">
-            Memory <span class="count" id="count-memory">0</span>
-          </button>
-          <button type="button" data-view="vault">Vault</button>
-          <button type="button" data-view="audit">Audit</button>
-          <button type="button" data-view="events">
-            Events <span class="count" id="count-events">0</span>
-          </button>
-          <button type="button" data-view="dashboard">Dashboard</button>
+
+          <div class="nav-section">Context</div>
+          <button class="nav-item" data-view="memory">Memory</button>
+          <button class="nav-item" data-view="vault">Vault</button>
+          <button class="nav-item" data-view="profiles">Profiles</button>
+
+          <div class="nav-section">Capabilities</div>
+          <button class="nav-item" data-view="tools">Tools</button>
+          <button class="nav-item" data-view="extensions">Extensions</button>
+
+          <div class="nav-section">Observe</div>
+          <button class="nav-item" data-view="audit">Audit</button>
+          <button class="nav-item" data-view="events">Events</button>
+          <button class="nav-item" data-view="system">System</button>
         </nav>
-        <div class="rail-footer">
-          GUI → InteractionService only.<br />
-          Never ToolExecutor. Never vault secrets.
+        <div class="rail-foot">
+          <span class="dot" id="sse-dot"></span>
+          <span id="sse-label">stream offline</span>
         </div>
       </aside>
 
-      <div id="workspace">
-        <!-- CHAT -->
+      <main class="main">
+        <!-- INTERACTION -->
         <section class="view active" id="view-chat">
-          <div class="topbar">
-            <div>
-              <h2>InteractionService</h2>
-              <div class="sub">
-                plan → decide → authorize → execute → verify
-              </div>
-            </div>
+          <header class="view-header">
+            <h1>Interaction</h1>
             <div class="pipeline" id="pipeline">
-              <span class="stage" data-stage="intent">intent</span>
-              <span class="stage" data-stage="plan">plan</span>
-              <span class="stage" data-stage="policy">policy</span>
-              <span class="stage" data-stage="authorize">authorize</span>
-              <span class="stage" data-stage="execute">execute</span>
-              <span class="stage" data-stage="verify">verify</span>
+              <span class="stage" data-stage="intent">Intent</span>
+              <span class="stage" data-stage="plan">Plan</span>
+              <span class="stage" data-stage="policy">Policy</span>
+              <span class="stage" data-stage="authorize">Authorize</span>
+              <span class="stage" data-stage="execute">Execute</span>
+              <span class="stage" data-stage="verify">Verify</span>
             </div>
-          </div>
-          <div id="chat-history"></div>
+            <div class="spacer"></div>
+            <input
+              class="field"
+              id="chat-profile"
+              value="default"
+              title="profile_id"
+              style="width: 120px"
+            />
+            <input
+              class="field"
+              id="chat-session"
+              value="web-console"
+              title="session_id"
+              style="width: 120px"
+            />
+          </header>
+          <div class="chat-log" id="chat-log"></div>
           <div class="composer">
-            <div class="hints" id="hints">
-              <button type="button" class="hint" data-text="write a note">
-                write a note
-              </button>
-              <button type="button" class="hint" data-text="read the note">
-                read the note
-              </button>
-              <button
-                type="button"
-                class="hint"
-                data-text="remember my editor is neovim"
-              >
-                remember preference
-              </button>
-              <button type="button" class="hint" data-text="what is my editor">
-                retrieve memory
-              </button>
-            </div>
-            <form id="chat-form">
-              <input
-                id="chat-input"
-                type="text"
-                placeholder="Task or question…"
-                autocomplete="off"
-                required
-              />
-              <button class="btn primary" type="submit" id="send-btn">
-                Send
-              </button>
-            </form>
+            <input
+              id="chat-input"
+              type="text"
+              placeholder="Request (model proposes, core authorizes)"
+              autocomplete="off"
+            />
+            <button class="btn primary" id="chat-send">Send</button>
+          </div>
+          <div class="hint">
+            GUI talks only to InteractionService. Secrets never surface. HIGH
+            risk requires confirm.
           </div>
         </section>
 
         <!-- TASKS -->
         <section class="view" id="view-tasks">
-          <div class="topbar">
-            <div>
-              <h2>Tasks</h2>
-              <div class="sub">Derived from live events + audit (task_id)</div>
+          <header class="view-header">
+            <h1>Tasks</h1>
+            <div class="spacer"></div>
+            <button class="btn" id="tasks-refresh">Refresh</button>
+          </header>
+          <div class="scroll">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>State</th>
+                    <th>Session</th>
+                    <th>Plan</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody id="tasks-body"></tbody>
+              </table>
             </div>
-            <button type="button" class="btn sm" id="btn-refresh-tasks">
-              Refresh
-            </button>
           </div>
-          <div class="panel-scroll">
-            <div class="list" id="task-list"></div>
-          </div>
+        </section>
+
+        <!-- PENDING CONFIRMATIONS -->
+        <section class="view" id="view-pending">
+          <header class="view-header">
+            <h1>Confirmations</h1>
+            <div class="spacer"></div>
+            <button class="btn" id="pending-refresh">Refresh</button>
+          </header>
+          <div class="scroll" id="pending-list"></div>
         </section>
 
         <!-- MEMORY -->
         <section class="view" id="view-memory">
-          <div class="topbar">
-            <div>
-              <h2>Memory</h2>
-              <div class="sub">Active only — deleted becomes unretrievable</div>
-            </div>
-            <button type="button" class="btn sm" id="btn-refresh-memory">
-              Refresh
-            </button>
-          </div>
-          <div class="panel-scroll">
-            <div class="list" id="memory-list"></div>
-          </div>
+          <header class="view-header">
+            <h1>Memory</h1>
+            <div class="spacer"></div>
+            <input class="field" id="memory-profile" value="default" />
+            <button class="btn" id="memory-refresh">Refresh</button>
+          </header>
+          <div class="scroll" id="memory-list"></div>
         </section>
 
         <!-- VAULT -->
         <section class="view" id="view-vault">
-          <div class="topbar">
-            <div>
-              <h2>Credential vault</h2>
-              <div class="sub">
-                References only — never secret material in the GUI
+          <header class="view-header">
+            <h1>Credential vault</h1>
+            <div class="spacer"></div>
+            <button class="btn" id="vault-refresh">Refresh</button>
+          </header>
+          <div class="scroll">
+            <div class="split">
+              <div>
+                <p
+                  class="empty"
+                  style="
+                    border: none;
+                    text-align: left;
+                    padding: 0 0 12px;
+                    color: var(--text-muted);
+                  "
+                >
+                  Metadata only. Secrets stay in the secure store and inject at
+                  the adapter boundary.
+                </p>
+                <div id="vault-list"></div>
+              </div>
+              <div class="card">
+                <h3>Add reference</h3>
+                <form class="form-grid" id="vault-form">
+                  <label
+                    >Name <input class="field" name="name" required
+                  /></label>
+                  <label
+                    >Secret
+                    <input
+                      class="field"
+                      name="secret"
+                      type="password"
+                      required
+                      minlength="8"
+                  /></label>
+                  <label
+                    >Profile
+                    <input class="field" name="profile_id" value="default"
+                  /></label>
+                  <label
+                    >Allowed tools (comma)
+                    <input class="field" name="allowed_tools" value="*"
+                  /></label>
+                  <label
+                    >Description <textarea name="description"></textarea>
+                  </label>
+                  <button class="btn primary" type="submit">Store</button>
+                </form>
               </div>
             </div>
-            <button type="button" class="btn sm" id="btn-refresh-vault">
-              Refresh
-            </button>
           </div>
-          <div class="panel-scroll">
-            <div class="card" style="margin-bottom: 16px">
-              <h3>Model</h3>
-              <div class="desc">
-                CredentialReference → destination + operation + lifetime. Tools
-                receive a scoped capability, not the vault.
+        </section>
+
+        <!-- PROFILES -->
+        <section class="view" id="view-profiles">
+          <header class="view-header">
+            <h1>Profiles</h1>
+            <div class="spacer"></div>
+            <button class="btn" id="profiles-refresh">Refresh</button>
+          </header>
+          <div class="scroll">
+            <div class="split">
+              <div id="profiles-list"></div>
+              <div class="card">
+                <h3>Upsert profile</h3>
+                <form class="form-grid" id="profile-form">
+                  <label>ID <input class="field" name="id" required /></label>
+                  <label
+                    >Name <input class="field" name="name" required
+                  /></label>
+                  <label
+                    >Context rules (JSON object)
+                    <textarea name="context_rules">{}</textarea>
+                  </label>
+                  <button class="btn primary" type="submit">Save</button>
+                </form>
               </div>
             </div>
-            <div class="list" id="vault-list"></div>
+          </div>
+        </section>
+
+        <!-- TOOLS -->
+        <section class="view" id="view-tools">
+          <header class="view-header">
+            <h1>Tools</h1>
+            <div class="spacer"></div>
+            <button class="btn" id="tools-refresh">Refresh</button>
+          </header>
+          <div class="scroll">
+            <p
+              class="empty"
+              style="
+                border: none;
+                text-align: left;
+                padding: 0 0 12px;
+                color: var(--text-muted);
+              "
+            >
+              Registry is read-only here. Register via code, builtins, or
+              process-isolated extensions.
+            </p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Capabilities</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody id="tools-body"></tbody>
+              </table>
+            </div>
+            <div id="tools-empty" class="empty hidden" style="margin-top: 12px">
+              No tools API yet. Add <code>GET /api/tools/</code> or use
+              Extensions to declare tools.
+            </div>
+          </div>
+        </section>
+
+        <!-- EXTENSIONS -->
+        <section class="view" id="view-extensions">
+          <header class="view-header">
+            <h1>Extensions</h1>
+          </header>
+          <div class="scroll">
+            <div class="card" style="margin-bottom: 12px">
+              <h3>How to add</h3>
+              <div class="item-body" style="color: var(--text-muted)">
+                Place a directory under
+                <code>workspace/plugins/&lt;id&gt;/</code> with
+                <code>manifest.json</code> (isolation: <code>process</code> by
+                default) and entrypoint implementing <code>declare()</code> /
+                <code>invoke()</code>. Discovery does not imply trust. Signature
+                + permissions are enforced before load.
+              </div>
+            </div>
+            <div id="extensions-list" class="empty">
+              Extension list API not mounted. After load, declared tools appear
+              under Tools when
+              <code>GET /api/tools/</code> exists. Check server logs for
+              process-host load lines.
+            </div>
           </div>
         </section>
 
         <!-- AUDIT -->
         <section class="view" id="view-audit">
-          <div class="topbar">
-            <div>
-              <h2>Audit chain</h2>
-              <div class="sub">Observer read from shared DB — no mutation</div>
-            </div>
-            <button type="button" class="btn sm" id="btn-refresh-audit">
-              Refresh
-            </button>
-          </div>
-          <div class="panel-scroll">
-            <div class="card">
-              <table class="data">
+          <header class="view-header">
+            <h1>Audit</h1>
+            <div class="spacer"></div>
+            <button class="btn" id="audit-refresh">Refresh</button>
+          </header>
+          <div class="scroll">
+            <div class="table-wrap">
+              <table>
                 <thead>
                   <tr>
-                    <th>Seq</th>
+                    <th>#</th>
                     <th>Time</th>
-                    <th>Component</th>
-                    <th>Action</th>
-                    <th>Result</th>
+                    <th>Event</th>
                     <th>Task</th>
+                    <th>Actor</th>
                   </tr>
                 </thead>
                 <tbody id="audit-body"></tbody>
@@ -187,112 +319,84 @@
 
         <!-- EVENTS -->
         <section class="view" id="view-events">
-          <div class="topbar">
-            <div>
-              <h2>Event bus</h2>
-              <div class="sub">Live SSE from /api/interaction/stream</div>
-            </div>
-            <button type="button" class="btn sm" id="btn-clear-events">
-              Clear
-            </button>
-          </div>
-          <div class="panel-scroll" id="event-feed"></div>
+          <header class="view-header">
+            <h1>Live events</h1>
+          </header>
+          <div class="scroll events-feed" id="events-feed"></div>
         </section>
 
-        <!-- DASHBOARD -->
-        <section class="view" id="view-dashboard">
-          <div class="topbar">
-            <div>
-              <h2>Dashboard</h2>
-              <div class="sub">Metrics + audit snapshot</div>
-            </div>
-            <button type="button" class="btn sm" id="btn-refresh-dash">
-              Refresh
-            </button>
-          </div>
-          <div class="panel-scroll">
-            <div class="grid-4" style="margin-bottom: 16px">
+        <!-- SYSTEM -->
+        <section class="view" id="view-system">
+          <header class="view-header">
+            <h1>System</h1>
+            <div class="spacer"></div>
+            <button class="btn" id="sys-refresh">Refresh</button>
+          </header>
+          <div class="scroll">
+            <div class="grid-4" style="margin-bottom: 12px">
               <div class="card">
                 <h3>CPU</h3>
-                <div class="value" id="m-cpu">0%</div>
-                <div class="desc" id="m-load">load —</div>
+                <div class="value" id="m-cpu">—</div>
+                <div class="desc" id="m-load">load</div>
               </div>
               <div class="card">
                 <h3>RAM</h3>
-                <div class="value" id="m-ram">0%</div>
+                <div class="value" id="m-ram">—</div>
                 <div class="desc" id="m-ram-detail">—</div>
               </div>
               <div class="card">
                 <h3>Disk</h3>
-                <div class="value" id="m-disk">0%</div>
+                <div class="value" id="m-disk">—</div>
                 <div class="desc" id="m-disk-detail">—</div>
               </div>
               <div class="card">
-                <h3>Provider health</h3>
-                <div class="value" id="m-prov">100</div>
-                <div class="desc">0–100 score</div>
+                <h3>Provider</h3>
+                <div class="value" id="m-prov">—</div>
+                <div class="desc">health 0–100</div>
               </div>
             </div>
-            <div class="grid-4" style="margin-bottom: 16px">
+            <div class="grid-4" style="margin-bottom: 12px">
               <div class="card">
                 <h3>RPM</h3>
-                <div class="value" id="m-rpm">0</div>
-                <div class="desc">requests / min</div>
+                <div class="value" id="m-rpm">—</div>
               </div>
               <div class="card">
                 <h3>Rate budget</h3>
-                <div class="value" id="m-budget">100%</div>
-                <div class="desc" id="m-rl-hits">0 limit hits</div>
+                <div class="value" id="m-budget">—</div>
+                <div class="desc" id="m-rl-hits">hits</div>
               </div>
               <div class="card">
                 <h3>Active tasks</h3>
-                <div class="value" id="m-active">0</div>
+                <div class="value" id="m-active">—</div>
               </div>
               <div class="card">
                 <h3>Security blocks</h3>
-                <div class="value" id="m-sec">0</div>
+                <div class="value" id="m-sec">—</div>
               </div>
             </div>
-            <div class="grid-4" style="margin-bottom: 16px">
+            <div class="grid-4">
               <div class="card">
                 <h3>Intents</h3>
-                <div class="value" id="m-intents">0</div>
+                <div class="value" id="m-intents">—</div>
               </div>
               <div class="card">
                 <h3>Tools</h3>
-                <div class="value" id="m-tools">0</div>
+                <div class="value" id="m-tools">—</div>
               </div>
               <div class="card">
                 <h3>Success</h3>
-                <div class="value" id="m-rate">0%</div>
+                <div class="value" id="m-rate">—</div>
               </div>
               <div class="card">
-                <h3>Avg ms</h3>
-                <div class="value" id="m-avg">0</div>
+                <h3>Avg latency</h3>
+                <div class="value" id="m-avg">—</div>
               </div>
-            </div>
-            <div class="grid-2" style="margin-bottom: 16px">
-              <div class="chart-box"><canvas id="chart-success"></canvas></div>
-              <div class="chart-box"><canvas id="chart-latency"></canvas></div>
-            </div>
-            <div class="card">
-              <h3>Recent audit</h3>
-              <table class="data">
-                <thead>
-                  <tr>
-                    <th>Seq</th>
-                    <th>Action</th>
-                    <th>Result</th>
-                    <th>Task</th>
-                  </tr>
-                </thead>
-                <tbody id="dash-audit"></tbody>
-              </table>
             </div>
           </div>
         </section>
-      </div>
+      </main>
     </div>
-    <script src="app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="app.js?v=3"></script>
   </body>
 </html>
