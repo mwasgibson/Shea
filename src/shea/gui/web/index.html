@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="crt-green">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,92 +7,116 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=VT323&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=3" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <div class="scanlines" aria-hidden="true"></div>
     <div class="app">
       <aside class="rail">
         <div class="brand">
-          <div class="brand-mark">S</div>
+          <div class="brand-mark" id="brand-mark">S</div>
           <div>
-            <div class="brand-name">SHEA</div>
-            <div class="brand-sub">Control</div>
+            <div class="brand-name" id="brand-name">SHEA</div>
+            <div class="brand-sub">v terminal</div>
           </div>
         </div>
-        <nav class="nav">
+        <nav class="nav" id="main-nav">
           <div class="nav-section">Operate</div>
-          <button class="nav-item active" data-view="chat">Interaction</button>
-          <button class="nav-item" data-view="tasks">Tasks</button>
-          <button class="nav-item" data-view="pending">
-            Confirmations <span class="badge hidden" id="pending-badge">0</span>
+          <button class="nav-item active" data-view="chat" style="--i: 0">
+            <span class="nav-ico">◆</span> Chat
           </button>
-
+          <button class="nav-item" data-view="tasks" style="--i: 1">
+            <span class="nav-ico">▣</span> Tasks
+          </button>
+          <button class="nav-item" data-view="pending" style="--i: 2">
+            <span class="nav-ico">◎</span> Confirm
+            <span class="badge hidden" id="pending-badge">0</span>
+          </button>
           <div class="nav-section">Context</div>
-          <button class="nav-item" data-view="memory">Memory</button>
-          <button class="nav-item" data-view="vault">Vault</button>
-          <button class="nav-item" data-view="profiles">Profiles</button>
-
-          <div class="nav-section">Capabilities</div>
-          <button class="nav-item" data-view="tools">Tools</button>
-          <button class="nav-item" data-view="extensions">Extensions</button>
-
+          <button class="nav-item" data-view="memory" style="--i: 3">
+            <span class="nav-ico">☰</span> Memory
+          </button>
+          <button class="nav-item" data-view="vault" style="--i: 4">
+            <span class="nav-ico">⬡</span> Vault
+          </button>
+          <button class="nav-item" data-view="profiles" style="--i: 5">
+            <span class="nav-ico">◉</span> Profiles
+          </button>
+          <div class="nav-section">Caps</div>
+          <button class="nav-item" data-view="tools" style="--i: 6">
+            <span class="nav-ico">⚙</span> Tools
+          </button>
+          <button class="nav-item" data-view="extensions" style="--i: 7">
+            <span class="nav-ico">⧉</span> Plugins
+          </button>
           <div class="nav-section">Observe</div>
-          <button class="nav-item" data-view="audit">Audit</button>
-          <button class="nav-item" data-view="events">Events</button>
-          <button class="nav-item" data-view="system">System</button>
+          <button class="nav-item" data-view="audit" style="--i: 8">
+            <span class="nav-ico">≡</span> Audit
+          </button>
+          <button class="nav-item" data-view="events" style="--i: 9">
+            <span class="nav-ico">⌁</span> Events
+          </button>
+          <button class="nav-item" data-view="system" style="--i: 10">
+            <span class="nav-ico">▤</span> System
+          </button>
+          <button class="nav-item" data-view="settings" style="--i: 11">
+            <span class="nav-ico">◇</span> Settings
+          </button>
         </nav>
         <div class="rail-foot">
           <span class="dot" id="sse-dot"></span>
-          <span id="sse-label">stream offline</span>
+          <span id="sse-label">offline</span>
         </div>
       </aside>
 
       <main class="main">
-        <!-- INTERACTION -->
+        <!-- CHAT -->
         <section class="view active" id="view-chat">
-          <header class="view-header">
-            <h1>Interaction</h1>
-            <div class="pipeline" id="pipeline">
-              <span class="stage" data-stage="intent">Intent</span>
-              <span class="stage" data-stage="plan">Plan</span>
-              <span class="stage" data-stage="policy">Policy</span>
-              <span class="stage" data-stage="authorize">Authorize</span>
-              <span class="stage" data-stage="execute">Execute</span>
-              <span class="stage" data-stage="verify">Verify</span>
-            </div>
+          <header class="view-header chat-top">
+            <h1>Chat</h1>
             <div class="spacer"></div>
-            <input
-              class="field"
-              id="chat-profile"
-              value="default"
-              title="profile_id"
-              style="width: 120px"
-            />
-            <input
-              class="field"
-              id="chat-session"
-              value="web-console"
-              title="session_id"
-              style="width: 120px"
-            />
+            <select class="field model-select" id="model-select" title="Model">
+              <option value="">default</option>
+              <option value="ollama">ollama</option>
+              <option value="ghost">ghost</option>
+              <option value="openai">openai</option>
+            </select>
           </header>
           <div class="chat-log" id="chat-log"></div>
           <div class="composer">
+            <button
+              type="button"
+              class="icon-btn"
+              id="mic-btn"
+              title="Voice input"
+              aria-label="Microphone"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"
+                />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </button>
             <input
               id="chat-input"
               type="text"
-              placeholder="Request (model proposes, core authorizes)"
+              placeholder="Message SHEA…"
               autocomplete="off"
             />
             <button class="btn primary" id="chat-send">Send</button>
-          </div>
-          <div class="hint">
-            GUI talks only to InteractionService. Secrets never surface. HIGH
-            risk requires confirm.
           </div>
         </section>
 
@@ -111,17 +135,18 @@
                     <th>ID</th>
                     <th>State</th>
                     <th>Session</th>
-                    <th>Plan</th>
                     <th>Updated</th>
                   </tr>
                 </thead>
                 <tbody id="tasks-body"></tbody>
               </table>
             </div>
+            <div class="card" style="margin-top: 16px; height: 240px; padding: 16px;">
+              <canvas id="sys-chart"></canvas>
+            </div>
           </div>
         </section>
 
-        <!-- PENDING CONFIRMATIONS -->
         <section class="view" id="view-pending">
           <header class="view-header">
             <h1>Confirmations</h1>
@@ -131,43 +156,31 @@
           <div class="scroll" id="pending-list"></div>
         </section>
 
-        <!-- MEMORY -->
         <section class="view" id="view-memory">
           <header class="view-header">
             <h1>Memory</h1>
             <div class="spacer"></div>
-            <input class="field" id="memory-profile" value="default" />
-            <button class="btn" id="memory-refresh">Refresh</button>
+            <input class="field" id="memory-profile" value="default" /><button
+              class="btn"
+              id="memory-refresh"
+            >
+              Refresh
+            </button>
           </header>
           <div class="scroll" id="memory-list"></div>
         </section>
 
-        <!-- VAULT -->
         <section class="view" id="view-vault">
           <header class="view-header">
-            <h1>Credential vault</h1>
+            <h1>Vault</h1>
             <div class="spacer"></div>
             <button class="btn" id="vault-refresh">Refresh</button>
           </header>
           <div class="scroll">
             <div class="split">
-              <div>
-                <p
-                  class="empty"
-                  style="
-                    border: none;
-                    text-align: left;
-                    padding: 0 0 12px;
-                    color: var(--text-muted);
-                  "
-                >
-                  Metadata only. Secrets stay in the secure store and inject at
-                  the adapter boundary.
-                </p>
-                <div id="vault-list"></div>
-              </div>
+              <div id="vault-list"></div>
               <div class="card">
-                <h3>Add reference</h3>
+                <h3>Add</h3>
                 <form class="form-grid" id="vault-form">
                   <label
                     >Name <input class="field" name="name" required
@@ -186,12 +199,8 @@
                     <input class="field" name="profile_id" value="default"
                   /></label>
                   <label
-                    >Allowed tools (comma)
-                    <input class="field" name="allowed_tools" value="*"
+                    >Tools <input class="field" name="allowed_tools" value="*"
                   /></label>
-                  <label
-                    >Description <textarea name="description"></textarea>
-                  </label>
                   <button class="btn primary" type="submit">Store</button>
                 </form>
               </div>
@@ -199,7 +208,6 @@
           </div>
         </section>
 
-        <!-- PROFILES -->
         <section class="view" id="view-profiles">
           <header class="view-header">
             <h1>Profiles</h1>
@@ -210,15 +218,14 @@
             <div class="split">
               <div id="profiles-list"></div>
               <div class="card">
-                <h3>Upsert profile</h3>
+                <h3>Upsert</h3>
                 <form class="form-grid" id="profile-form">
                   <label>ID <input class="field" name="id" required /></label>
                   <label
                     >Name <input class="field" name="name" required
                   /></label>
                   <label
-                    >Context rules (JSON object)
-                    <textarea name="context_rules">{}</textarea>
+                    >Rules JSON <textarea name="context_rules">{}</textarea>
                   </label>
                   <button class="btn primary" type="submit">Save</button>
                 </form>
@@ -227,7 +234,6 @@
           </div>
         </section>
 
-        <!-- TOOLS -->
         <section class="view" id="view-tools">
           <header class="view-header">
             <h1>Tools</h1>
@@ -235,18 +241,6 @@
             <button class="btn" id="tools-refresh">Refresh</button>
           </header>
           <div class="scroll">
-            <p
-              class="empty"
-              style="
-                border: none;
-                text-align: left;
-                padding: 0 0 12px;
-                color: var(--text-muted);
-              "
-            >
-              Registry is read-only here. Register via code, builtins, or
-              process-isolated extensions.
-            </p>
             <div class="table-wrap">
               <table>
                 <thead>
@@ -259,40 +253,26 @@
                 <tbody id="tools-body"></tbody>
               </table>
             </div>
-            <div id="tools-empty" class="empty hidden" style="margin-top: 12px">
-              No tools API yet. Add <code>GET /api/tools/</code> or use
-              Extensions to declare tools.
-            </div>
+            <div id="tools-empty" class="empty hidden">No tools API yet.</div>
           </div>
         </section>
 
-        <!-- EXTENSIONS -->
         <section class="view" id="view-extensions">
-          <header class="view-header">
-            <h1>Extensions</h1>
-          </header>
+          <header class="view-header"><h1>Plugins</h1></header>
           <div class="scroll">
-            <div class="card" style="margin-bottom: 12px">
-              <h3>How to add</h3>
-              <div class="item-body" style="color: var(--text-muted)">
-                Place a directory under
-                <code>workspace/plugins/&lt;id&gt;/</code> with
-                <code>manifest.json</code> (isolation: <code>process</code> by
-                default) and entrypoint implementing <code>declare()</code> /
-                <code>invoke()</code>. Discovery does not imply trust. Signature
-                + permissions are enforced before load.
+            <div class="card">
+              <div class="item-body">
+                Drop under <code>workspace/plugins/&lt;id&gt;/</code> with
+                <code>manifest.json</code> (process isolation default).
+                Discovery ≠ trust.
               </div>
             </div>
-            <div id="extensions-list" class="empty">
-              Extension list API not mounted. After load, declared tools appear
-              under Tools when
-              <code>GET /api/tools/</code> exists. Check server logs for
-              process-host load lines.
+            <div id="extensions-list" class="empty" style="margin-top: 12px">
+              List loads when /api/extensions exists.
             </div>
           </div>
         </section>
 
-        <!-- AUDIT -->
         <section class="view" id="view-audit">
           <header class="view-header">
             <h1>Audit</h1>
@@ -308,7 +288,6 @@
                     <th>Time</th>
                     <th>Event</th>
                     <th>Task</th>
-                    <th>Actor</th>
                   </tr>
                 </thead>
                 <tbody id="audit-body"></tbody>
@@ -317,15 +296,11 @@
           </div>
         </section>
 
-        <!-- EVENTS -->
         <section class="view" id="view-events">
-          <header class="view-header">
-            <h1>Live events</h1>
-          </header>
+          <header class="view-header"><h1>Events</h1></header>
           <div class="scroll events-feed" id="events-feed"></div>
         </section>
 
-        <!-- SYSTEM -->
         <section class="view" id="view-system">
           <header class="view-header">
             <h1>System</h1>
@@ -333,7 +308,7 @@
             <button class="btn" id="sys-refresh">Refresh</button>
           </header>
           <div class="scroll">
-            <div class="grid-4" style="margin-bottom: 12px">
+            <div class="grid-4">
               <div class="card">
                 <h3>CPU</h3>
                 <div class="value" id="m-cpu">—</div>
@@ -352,7 +327,6 @@
               <div class="card">
                 <h3>Provider</h3>
                 <div class="value" id="m-prov">—</div>
-                <div class="desc">health 0–100</div>
               </div>
             </div>
             <div class="grid-4" style="margin-bottom: 12px">
@@ -374,29 +348,70 @@
                 <div class="value" id="m-sec">—</div>
               </div>
             </div>
-            <div class="grid-4">
-              <div class="card">
-                <h3>Intents</h3>
-                <div class="value" id="m-intents">—</div>
-              </div>
-              <div class="card">
-                <h3>Tools</h3>
-                <div class="value" id="m-tools">—</div>
-              </div>
-              <div class="card">
-                <h3>Success</h3>
-                <div class="value" id="m-rate">—</div>
-              </div>
-              <div class="card">
-                <h3>Avg latency</h3>
-                <div class="value" id="m-avg">—</div>
-              </div>
+          </div>
+        </section>
+
+        <!-- SETTINGS -->
+        <section class="view" id="view-settings">
+          <header class="view-header"><h1>Settings</h1></header>
+          <div class="scroll">
+            <div class="form-grid" style="max-width: 420px">
+              <label
+                >Theme
+                <select class="field" id="set-theme">
+                  <option value="crt-green">CRT Green</option>
+                  <option value="crt-amber">CRT Amber</option>
+                  <option value="phosphor-blue">Phosphor Blue</option>
+                  <option value="paper">Paper (light)</option>
+                </select>
+              </label>
+              <label
+                >Display name
+                <input class="field" id="set-name" value="SHEA" />
+              </label>
+              <label
+                >Brand letter
+                <input class="field" id="set-mark" value="S" maxlength="2" />
+              </label>
+              <label
+                >Agent avatar URL (optional)
+                <input
+                  class="field"
+                  id="set-agent-avatar"
+                  placeholder="https://… or leave blank for glyph"
+                />
+              </label>
+              <label
+                >Your avatar URL (optional)
+                <input
+                  class="field"
+                  id="set-user-avatar"
+                  placeholder="https://… or leave blank for glyph"
+                />
+              </label>
+              <label
+                >Session id
+                <input class="field" id="chat-session" value="web-console" />
+              </label>
+              <label
+                >Profile id
+                <input class="field" id="chat-profile" value="default" />
+              </label>
+              <label class="check-row">
+                <input type="checkbox" id="set-scanlines" checked /> Scanlines
+              </label>
+              <label class="check-row">
+                <input type="checkbox" id="set-nav-anim" checked /> Nav entrance
+                animation
+              </label>
+              <button class="btn primary" type="button" id="set-save">
+                Save locally
+              </button>
             </div>
           </div>
         </section>
       </main>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="app.js?v=3"></script>
+    <script src="/app.js"></script>
   </body>
 </html>

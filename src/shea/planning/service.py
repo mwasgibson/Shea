@@ -26,10 +26,13 @@ from .validator import validate_plan
 
 
 def _build_plan_prompt(intent: Intent, available_tools: list[str]) -> str:
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     tools_block = "\n".join(available_tools)
     return (
         "Produce a JSON object with a 'steps' array to accomplish this goal. "
         "Each step must have 'tool', 'action', and optionally 'arguments' and 'description'.\n\n"
+        f"System Time: {current_time}\n\n"
         "Available Tools:\n"
         f"{tools_block}\n\n"
         f"Goal: {intent.goal}"

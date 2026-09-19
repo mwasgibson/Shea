@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     db_path = os.environ.get("SHEA_DB_PATH", "shea.db")
     workspace = os.environ.get("SHEA_WORKSPACE", "./workspace")
     
-    runtime = build_runtime(db_path=db_path, workspace=workspace)
+    runtime = build_runtime(db_path=db_path, workspace=workspace, include_http_fetch=True)
     app.state.runtime = runtime
     
     yield  # Server runs here
