@@ -24,6 +24,7 @@ from shea.contracts.enums import ExecutionOutcome, TaskState
 from shea.contracts.models import Task, ToolExecutionRecord, ToolRequest, ToolResponse
 from shea.core.orchestrator import Orchestrator
 from shea.credentials.ports import CredentialBroker
+from shea.events.channels import ExecutionChannel
 from shea.execution.permit import ExecutionPermitAuthority
 from shea.observability.metrics import global_metrics
 from shea.ports.clock import Clock
@@ -181,7 +182,9 @@ class ExecutionService:
         clock: Clock,
         intent_repository: IntentRepository | None = None,
         credential_broker: CredentialBroker | None = None,
+        execution_channel: ExecutionChannel | None = None,
     ) -> None:
+        self._channel = execution_channel
         self._permits = permit_authority
         self._tool_executor = tool_executor
         self._execution_supervisor = execution_supervisor
@@ -444,6 +447,15 @@ class ExecutionService:
                     "evidence_id": supervision.evidence_id,
                 },
             )
+            
+            if self._channel is not None:
+                self._channel.completed(
+                    task_id=task.id,
+                    tool=request.tool,
+                    outcome=result.outcome,
+                    request_id=task.request_id,
+                    data=result.response.data,
+                )
 
             # Consume one-shot auth only on durable SUCCESS
             if result.outcome is ExecutionOutcome.SUCCESS:

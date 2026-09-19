@@ -356,7 +356,10 @@ def build_runtime(
         unit_of_work=unit_of_work,
         security_channel=security_channel,
     )
+    from shea.events.channels import ExecutionChannel
+    execution_channel = ExecutionChannel(event_bus, clock, id_generator)
     execution_service = ExecutionService(
+        execution_channel=execution_channel,
         permit_authority=permit_authority,
         tool_executor=tool_executor,
         execution_supervisor=supervisor,

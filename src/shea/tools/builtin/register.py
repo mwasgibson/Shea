@@ -29,3 +29,7 @@ def register_builtin_tools(
         providers.append(BuiltinHttpFetchProvider(network_policy))
 
     load_tools(registry, providers, verifier_registry=verifier_registry)
+
+    # Register the system.reply tool for conversational output
+    from shea.tools.builtin.interaction import register_interaction_tools
+    register_interaction_tools(registry)

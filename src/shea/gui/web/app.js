@@ -246,11 +246,15 @@
           typeof payload?.data === "string"
             ? payload.data
             : JSON.stringify(payload?.data ?? payload, null, 2);
-        appendMsg(
-          "agent",
-          "",
-          `<div class="meta">${escapeHtml(kind)}</div><strong>Tool</strong><div class="tool-block">${escapeHtml(body)}</div>`,
-        );
+        if (payload?.tool === "system.reply") {
+          appendMsg("agent", escapeHtml(body));
+        } else {
+          appendMsg(
+            "agent",
+            "",
+            `<div class="meta">${escapeHtml(kind)}</div><strong>Tool</strong><div class="tool-block">${escapeHtml(body)}</div>`,
+          );
+        }
         markStage("execute", "run");
         return;
       }
@@ -267,17 +271,18 @@
       "PlanStepCompleted",
       "PlanCompleted",
       "ToolExecutionRecord",
-      "task.state",
-      "execution.success",
-      "execution.failed",
-      "verification.passed",
-      "verification.failed",
-      "security.halt",
-      "policy.allowed",
+      "task.state_changed",
+      "task.created",
+      "task.error",
+      "security.violation",
       "policy.denied",
       "authorization.granted",
       "memory.stored",
       "memory.deleted",
+      "execution.started",
+      "execution.completed",
+      "execution.failed",
+      "execution.suppressed",
     ].forEach((name) => {
       es.addEventListener(name, (ev) => handle(name, ev.data));
     });
@@ -386,7 +391,7 @@
           }
           return `<tr>
             <td>${ev.sequence_number ?? "—"}</td>
-            <td>${ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : "—"}</td>
+            <td>${ev.timestamp ? new Date(ev.timestamp).toLocaleString() : "—"}</td>
             <td>${escapeHtml(ev.component || "—")}</td>
             <td><code>${escapeHtml(ev.action || "—")}</code></td>
             <td style="color:${color};font-weight:600">${escapeHtml(result.toUpperCase())}</td>

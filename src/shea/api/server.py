@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from shea.api.routes import credentials, interaction, memory, observability, profiles, tasks
 from shea.bootstrap import build_runtime
@@ -56,9 +57,9 @@ def create_app() -> FastAPI:
     app.include_router(tasks.router, prefix="/api")
     app.include_router(profiles.router, prefix="/api")
 
-    # Register the built-in HTML/JS GUI at the root endpoint
-    from shea.api.gui import register_gui
-    register_gui(app)
+    # Register the frontend GUI from the gui/web folder at the root
+    gui_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gui", "web")
+    app.mount("/", StaticFiles(directory=gui_path, html=True), name="gui")
 
     return app
 

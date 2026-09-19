@@ -25,11 +25,14 @@ from .templates import PlanTemplateRegistry, StepBlueprint
 from .validator import validate_plan
 
 
-def _build_plan_prompt(intent: Intent) -> str:
+def _build_plan_prompt(intent: Intent, available_tools: list[str]) -> str:
+    tools_block = "\n".join(available_tools)
     return (
         "Produce a JSON object with a 'steps' array to accomplish this goal. "
-        "Each step must have 'tool', 'action', and optionally 'arguments' and "
-        f"'description'.\n\nGoal: {intent.goal}"
+        "Each step must have 'tool', 'action', and optionally 'arguments' and 'description'.\n\n"
+        "Available Tools:\n"
+        f"{tools_block}\n\n"
+        f"Goal: {intent.goal}"
     )
 
 
@@ -328,5 +331,9 @@ class PlanningService:
             raise PlanValidationError(
                 intent.task_id, "no plan template matched and no model provider configured"
             )
-        response = self._model.generate(_build_plan_prompt(intent))
+        available_tools = [
+            f"- {decl.name}: {decl.description}"
+            for decl in self._tools.list_tools()
+        ]
+        response = self._model.generate(_build_plan_prompt(intent, available_tools))
         return _blueprints_from_model_data(response.structured_data)

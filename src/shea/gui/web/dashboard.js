@@ -102,7 +102,7 @@ document.addEventListener("DOMContentLoaded", () => {
       (auditData.events || []).forEach((ev) => {
         const tr = document.createElement("tr");
         const timeStr = ev.timestamp
-          ? new Date(ev.timestamp).toLocaleTimeString()
+          ? new Date(ev.timestamp).toLocaleString()
           : "—";
         const result = (ev.result || "—").toString().toUpperCase();
         let resultColor = "var(--fg-muted)";

@@ -232,10 +232,14 @@ class ExecutionChannel:
         outcome: ExecutionOutcome,
         *,
         request_id: str | None = None,
+        data: Any | None = None,
     ) -> None:
+        payload: dict[str, Any] = {"task_id": task_id, "tool": tool, "outcome": outcome.value}
+        if data is not None:
+            payload["data"] = data
         self._emit(
             "execution.completed",
-            {"task_id": task_id, "tool": tool, "outcome": outcome.value},
+            payload,
             correlation_id=request_id,
         )
 
