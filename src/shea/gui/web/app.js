@@ -579,82 +579,28 @@ async function loadAudit() {
 }
 $("#audit-refresh")?.addEventListener("click", loadAudit);
 
-let sysChart = null;
-const chartData = { labels: [], cpu: [], ram: [], disk: [] };
-
-function initChart() {
-  const ctx = $("#sys-chart");
-  if (!ctx || sysChart || typeof Chart === 'undefined') return;
-  sysChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: chartData.labels,
-      datasets: [
-        { label: 'CPU %', data: chartData.cpu, borderColor: '#4ade80', tension: 0.3 },
-        { label: 'RAM %', data: chartData.ram, borderColor: '#3b82f6', tension: 0.3 },
-        { label: 'Disk %', data: chartData.disk, borderColor: '#a855f7', tension: 0.3 }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      scales: {
-        y: { beginAtZero: true, max: 100 }
-      },
-      plugins: {
-        legend: { labels: { color: getComputedStyle(document.body).getPropertyValue('--text').trim() || '#ffffff' } }
-      }
-    }
-  });
-}
-
-function updateChart(m) {
-  initChart();
-  if (!sysChart) return;
-  const now = new Date().toLocaleTimeString();
-  chartData.labels.push(now);
-  chartData.cpu.push(m.cpu_percent ?? 0);
-  chartData.ram.push(m.ram_percent ?? 0);
-  chartData.disk.push(m.disk_percent ?? 0);
-  
-  if (chartData.labels.length > 20) {
-    chartData.labels.shift();
-    chartData.cpu.shift();
-    chartData.ram.shift();
-    chartData.disk.shift();
-  }
-  sysChart.update();
-}
 
 async function refreshSystem() {
   try {
     const res = await fetch("/api/observability/metrics");
     const m = await res.json();
+    $("#m-cpu") && ($("#m-cpu").textContent = `${m.cpu_percent ?? 0}%`);
+    $("#m-load") && ($("#m-load").textContent = `${m.load_1m ?? 0} load`);
+    $("#m-ram") && ($("#m-ram").textContent = `${m.ram_percent ?? 0}%`);
+    $("#m-ram-detail") && ($("#m-ram-detail").textContent = `${Math.round(m.ram_used_mb ?? 0)} / ${Math.round(m.ram_total_mb ?? 0)} MB`);
+    $("#m-disk") && ($("#m-disk").textContent = `${m.disk_percent ?? 0}%`);
+    $("#m-disk-detail") && ($("#m-disk-detail").textContent = `${Math.round(m.disk_used_gb ?? 0)} / ${Math.round(m.disk_total_gb ?? 0)} GB`);
+    $("#m-prov") && ($("#m-prov").textContent = `${m.provider_health ?? "—"}%`);
     
-    if ($("#m-cpu")) {
-      $("#m-cpu").textContent = `${(m.cpu_percent ?? 0).toFixed(1)}%`;
-      $("#m-load").textContent = `load: ${(m.load_1m ?? 0).toFixed(2)}`;
-      
-      $("#m-ram").textContent = `${(m.ram_percent ?? 0).toFixed(1)}%`;
-      $("#m-ram-detail").textContent = `${Math.round(m.ram_used_mb ?? 0)} / ${Math.round(m.ram_total_mb ?? 0)} MB`;
-      
-      $("#m-disk").textContent = `${(m.disk_percent ?? 0).toFixed(1)}%`;
-      $("#m-disk-detail").textContent = `${(m.disk_used_gb ?? 0).toFixed(1)} / ${(m.disk_total_gb ?? 0).toFixed(1)} GB`;
-      
-      $("#m-prov").textContent = `${m.provider_health ?? "—"}`;
-      
-      $("#m-rpm").textContent = `${(m.requests_per_minute ?? 0).toFixed(1)}`;
-      $("#m-budget").textContent = `${((m.rate_limit_remaining ?? 0) * 100).toFixed(1)}%`;
-      $("#m-rl-hits").textContent = `hits: ${m.rate_limit_hits ?? 0}`;
-      
-      $("#m-active").textContent = `${m.active_tasks ?? 0}`;
-      $("#m-sec").textContent = `${m.security_blocks ?? 0}`;
-    }
+    $("#m-rpm") && ($("#m-rpm").textContent = `${m.requests_per_minute ?? 0}`);
+    $("#m-budget") && ($("#m-budget").textContent = `${Math.round((m.rate_limit_remaining ?? 0) * 100)}%`);
+    $("#m-rl-hits") && ($("#m-rl-hits").textContent = `${m.rate_limit_hits ?? 0} hits`);
+    $("#m-active") && ($("#m-active").textContent = `${m.active_tasks ?? 0}`);
+    $("#m-sec") && ($("#m-sec").textContent = `${m.security_blocks ?? 0}`);
     
-    updateChart(m);
-  } catch (err) {
-    console.error("refreshSystem error:", err);
+    if (window.updateChart) window.updateChart(m);
+  } catch {
+    /* ignore */
   }
 }
 $("#sys-refresh")?.addEventListener("click", refreshSystem);
@@ -663,3 +609,55 @@ connectSSE();
 refreshSystem();
 setInterval(refreshSystem, 10000);
 loadPending();
+
+let sysChart = null;
+const sysChartData = {
+  labels: [],
+  datasets: [
+    { label: "CPU %", data: [], borderColor: "#00ffcc", tension: 0.1, pointRadius: 2 },
+    { label: "RAM %", data: [], borderColor: "#ff00ff", tension: 0.1, pointRadius: 2 },
+    { label: "RPM", data: [], borderColor: "#ffcc00", tension: 0.1, pointRadius: 2 }
+  ]
+};
+
+window.updateChart = function(m) {
+  const ctx = document.getElementById("sys-chart");
+  if (!ctx || typeof Chart === "undefined") return;
+
+  const now = new Date();
+  const timeLabel = now.toLocaleTimeString();
+  
+  sysChartData.labels.push(timeLabel);
+  sysChartData.datasets[0].data.push(m.cpu_percent || 0);
+  sysChartData.datasets[1].data.push(m.ram_percent || 0);
+  sysChartData.datasets[2].data.push(m.requests_per_minute || 0);
+  
+  if (sysChartData.labels.length > 60) {
+    sysChartData.labels.shift();
+    sysChartData.datasets.forEach(d => d.data.shift());
+  }
+  
+  const view = document.getElementById("view-system");
+  if (!view || !view.classList.contains("active")) return;
+  
+  if (!sysChart) {
+    sysChart = new Chart(ctx, {
+      type: "line",
+      data: sysChartData,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 0 },
+        scales: {
+          x: { display: false },
+          y: { min: 0 }
+        },
+        plugins: {
+          legend: { labels: { color: "#888" } }
+        }
+      }
+    });
+  } else {
+    sysChart.update();
+  }
+};

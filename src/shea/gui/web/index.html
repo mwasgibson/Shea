@@ -11,6 +11,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.js"></script>
   </head>
   <body>
     <div class="scanlines" aria-hidden="true"></div>
@@ -20,7 +21,6 @@
           <div class="brand-mark" id="brand-mark">S</div>
           <div>
             <div class="brand-name" id="brand-name">SHEA</div>
-            <div class="brand-sub">v terminal</div>
           </div>
         </div>
         <nav class="nav" id="main-nav">
@@ -140,9 +140,6 @@
                 </thead>
                 <tbody id="tasks-body"></tbody>
               </table>
-            </div>
-            <div class="card" style="margin-top: 16px; height: 240px; padding: 16px;">
-              <canvas id="sys-chart"></canvas>
             </div>
           </div>
         </section>
@@ -347,6 +344,12 @@
                 <h3>Security blocks</h3>
                 <div class="value" id="m-sec">—</div>
               </div>
+            </div>
+            <div
+              class="card"
+              style="margin-top: 12px; height: 250px; position: relative"
+            >
+              <canvas id="sys-chart"></canvas>
             </div>
           </div>
         </section>
