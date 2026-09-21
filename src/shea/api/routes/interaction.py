@@ -125,14 +125,20 @@ def submit_chat(
         
         response_text = "Requires confirmation" if needs_confirmation else "Done."
         if result.task:
-            plan = runtime.plan_repository.get_by_task(result.task.id)
-            if plan:
-                for step in reversed(plan.steps):
-                    if step.tool == "system.reply" and step.state == "COMPLETED":
-                        reply_msg: object = step.arguments.get("message")
-                        if isinstance(reply_msg, str):
-                            response_text = reply_msg
-                        break
+            if result.task.state.value == "FAILED":
+                response_text = "Error: Task failed during execution."
+            else:
+                plan = runtime.plan_repository.get_by_task(result.task.id)
+                if plan:
+                    for step in reversed(plan.steps):
+                        if step.tool == "system.reply" and step.state == "COMPLETED":
+                            reply_msg: object = step.arguments.get("message")
+                            if isinstance(reply_msg, str):
+                                response_text = reply_msg
+                            break
+                        elif step.state == "FAILED":
+                            response_text = f"Error: Step '{step.tool}' failed."
+                            break
                     
         if response_text not in ("Requires confirmation", "Done."):
             # Save agent reply to DB so history works

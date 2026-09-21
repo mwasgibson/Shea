@@ -31,13 +31,16 @@ def _build_plan_prompt(intent: Intent, available_tools: list[str]) -> str:
     tools_block = "\n".join(available_tools)
     return (
         "Produce a JSON object with a 'steps' array to accomplish this goal. "
-        "Each step must have 'tool', 'action', and optionally 'arguments' and 'description'.\n"
+        'Reply with a single JSON object only, exact shape: {"steps":[{"tool": "string", "action": "string", "arguments": {"key": "value"}, "description": "string"}]}. '
+        "Empty steps are invalid. Use only tools listed below.\n"
         "IMPORTANT: If the user expects a conversational response, a summary, or the result of a read operation, "
-        "you MUST include a final step using the `system.reply` tool to deliver the message back to the user.\n\n"
+        "you MUST include a final step using the `system.reply` tool to deliver the message back to the user.\n"
+        'Example: {"steps": [{"tool": "system.reply", "action": "Reply to user", "arguments": {"message": "Hello!"}, "description": "Greeting"}]}\n\n'
         f"System Time: {current_time}\n\n"
         "Available Tools:\n"
         f"{tools_block}\n\n"
-        f"Goal: {intent.goal}"
+        f"Goal: {intent.goal}\n"
+        f"Parameters: {intent.parameters}\n"
     )
 
 
@@ -336,8 +339,18 @@ class PlanningService:
             raise PlanValidationError(
                 intent.task_id, "no plan template matched and no model provider configured"
             )
+        def _get_schema_keys(decl: Any) -> str:
+            schema = decl.argument_schema
+            if not schema:
+                return "None"
+            if hasattr(schema, "keys"):
+                return str(list(schema.keys()))
+            if hasattr(schema, "arguments"):
+                return str(list(schema.arguments.keys()))
+            return "None"
+
         available_tools = [
-            f"- {decl.name}: {decl.description}"
+            f"- {decl.name}: {decl.description} (Args: {_get_schema_keys(decl)})"
             for decl in self._tools.list_tools()
         ]
         response = self._model.generate(_build_plan_prompt(intent, available_tools))

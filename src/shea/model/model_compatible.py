@@ -46,11 +46,9 @@ class ModelCompatibleProvider:
                 {
                     "role": "system",
                     "content": (
-                        "You are a planner for the Shea agent. "
-                        "Reply with a single JSON object only, shape: "
-                        '{"steps":[{"tool":str,"action":str,"arguments":{},"description":str}]}. '
-                        "Use only tools the user context implies; prefer filesystem.read, "
-                        "filesystem.write when appropriate. Empty steps are invalid."
+                        "You are the core intelligence of the Shea agent. "
+                        "Follow the user's instructions exactly. "
+                        "If the user requests a JSON object, you must reply with ONLY a valid JSON object matching their requested schema."
                     ),
                 },
                 {"role": "user", "content": prompt},

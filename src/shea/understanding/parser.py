@@ -14,7 +14,9 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 def _build_intent_prompt(text: str) -> str:
     return (
         "Extract a structured intent from the following user request. "
-        "Respond with a JSON object containing: type, goal, parameters, confidence.\n\n"
+        "Reply with a single JSON object only, exact shape: "
+        '{"type": "task" or "query", "goal": "what to accomplish", "parameters": {}, "confidence": 0.0 to 1.0}\n'
+        "IMPORTANT: If the user is just saying hello, greeting, or being conversational, set type='query', goal='respond conversationally', and confidence=1.0.\n\n"
         f"User request: {text}"
     )
 

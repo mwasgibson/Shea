@@ -440,8 +440,6 @@ async function sendChat() {
       loadPending();
     } else {
       let out = data.text || "Done.";
-      if (data.task_id && data.state)
-        out += `\n${data.task_id} · ${data.state}`;
       replaceTyping(typing, escapeHtml(out));
     }
   } catch (err) {
