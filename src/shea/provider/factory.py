@@ -45,27 +45,68 @@ def build_provider_routing_service(audit: AuditRecorder, requirements: RoutingRe
         )
         registered.append(RegisteredProvider(profile=profile, provider=provider))
 
-    # 2. OpenAI / Ghost
-    api_key = _env("OPENAI_API_KEY", "GHOST_API_KEY")
-    if api_key:
-        base_url = _env("OPENAI_BASE_URL", "GHOST_BASE_URL", default="https://api.openai.com/v1") or ""
-        model = _env("OPENAI_MODEL", "GHOST_MODEL", default="gpt-4o-mini") or ""
-        if "(" in model:
-            model = model.split("(", 1)[0].strip()
-        
+    # 2. Ghost (OpenRouter)
+    ghost_key = _env("GHOST_API_KEY")
+    if ghost_key:
+        base_url = _env("GHOST_BASE_URL", default="https://openrouter.ai/api/v1") or "https://openrouter.ai/api/v1"
+        model = _env("GHOST_MODEL", default="meta-llama/llama-3.1-8b-instruct") or "meta-llama/llama-3.1-8b-instruct"
         provider = ModelCompatibleProvider(
-            api_key=api_key,
+            api_key=ghost_key,
             base_url=base_url.rstrip("/"),
             model=model,
             timeout_seconds=60.0,
-            name="openai",
+            name="openrouter",
             use_json_response_format=False,
         )
         profile = ProviderProfile(
-            provider_id="openai-remote",
+            provider_id="openrouter-remote",
             model_id=model,
             trust_level=ProviderTrustLevel.TRUSTED_REMOTE,
             capabilities=frozenset({"chat", "tools", "vision"}),
+            context_limit=128000,
+        )
+        registered.append(RegisteredProvider(profile=profile, provider=provider))
+
+    # 3. OpenAI (Nvidia)
+    openai_key = _env("OPENAI_API_KEY")
+    if openai_key:
+        base_url = _env("OPENAI_BASE_URL", default="https://integrate.api.nvidia.com/v1") or "https://integrate.api.nvidia.com/v1"
+        model = _env("OPENAI_MODEL", default="nvidia/nemotron-3.5-lightning-30b-a3b") or "nvidia/nemotron-3.5-lightning-30b-a3b"
+        provider = ModelCompatibleProvider(
+            api_key=openai_key,
+            base_url=base_url.rstrip("/"),
+            model=model,
+            timeout_seconds=60.0,
+            name="nvidia",
+            use_json_response_format=False,
+        )
+        profile = ProviderProfile(
+            provider_id="nvidia-remote",
+            model_id=model,
+            trust_level=ProviderTrustLevel.TRUSTED_REMOTE,
+            capabilities=frozenset({"chat", "tools"}),
+            context_limit=128000,
+        )
+        registered.append(RegisteredProvider(profile=profile, provider=provider))
+
+    # 4. Anthropic (Kimi)
+    anthropic_key = _env("ANTHROPIC_AUTH_TOKEN")
+    if anthropic_key:
+        base_url = _env("ANTHROPIC_BASE_URL", default="https://api.moonshot.cn/v1") or "https://api.moonshot.cn/v1"
+        model = _env("ANTHROPIC_MODEL", default="moonshot-v1-8k") or "moonshot-v1-8k"
+        provider = ModelCompatibleProvider(
+            api_key=anthropic_key,
+            base_url=base_url.rstrip("/"),
+            model=model,
+            timeout_seconds=60.0,
+            name="kimi",
+            use_json_response_format=False,
+        )
+        profile = ProviderProfile(
+            provider_id="kimi-remote",
+            model_id=model,
+            trust_level=ProviderTrustLevel.TRUSTED_REMOTE,
+            capabilities=frozenset({"chat", "tools"}),
             context_limit=128000,
         )
         registered.append(RegisteredProvider(profile=profile, provider=provider))

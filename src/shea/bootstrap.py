@@ -89,6 +89,7 @@ from shea.tools.registry import ToolRegistry
 from shea.understanding.deterministic import DeterministicIntentMatcher
 from shea.verification.service import VerificationService
 from shea.verification.verifier import VerifierRegistry
+from shea.persistence.sqlite.chat_repository import SqliteChatRepository
 
 
 @dataclass
@@ -96,6 +97,8 @@ class SheaRuntime:
     """Process-wide wired graph. Construct once at startup."""
 
     conn: sqlite3.Connection
+    chat_repository: SqliteChatRepository
+    plan_repository: SqlitePlanRepository
     interaction_service: InteractionService
     unit_of_work: SqliteUnitOfWork
     orchestrator: Orchestrator
@@ -194,6 +197,7 @@ def build_runtime(
     conn = open_connection(db_path)
     run_migrations(conn)
     unit_of_work = SqliteUnitOfWork(conn)
+    chat_repository = SqliteChatRepository(conn, unit_of_work=unit_of_work)
     clock = SystemClock()
     id_generator = UuidIdGenerator()
 
@@ -460,6 +464,8 @@ def build_runtime(
 
     runtime = SheaRuntime(
         conn=conn,
+        chat_repository=chat_repository,
+        plan_repository=plan_repository,
         unit_of_work=unit_of_work,
         orchestrator=orchestrator,
         tool_registry=registry,

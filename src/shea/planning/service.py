@@ -31,7 +31,9 @@ def _build_plan_prompt(intent: Intent, available_tools: list[str]) -> str:
     tools_block = "\n".join(available_tools)
     return (
         "Produce a JSON object with a 'steps' array to accomplish this goal. "
-        "Each step must have 'tool', 'action', and optionally 'arguments' and 'description'.\n\n"
+        "Each step must have 'tool', 'action', and optionally 'arguments' and 'description'.\n"
+        "IMPORTANT: If the user expects a conversational response, a summary, or the result of a read operation, "
+        "you MUST include a final step using the `system.reply` tool to deliver the message back to the user.\n\n"
         f"System Time: {current_time}\n\n"
         "Available Tools:\n"
         f"{tools_block}\n\n"

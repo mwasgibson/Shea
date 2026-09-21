@@ -47,8 +47,21 @@ class ProviderRouter:
 
         health_by_id = {profile.provider_id: health for profile, health in providers}
 
-        def _rank_key(profile: ProviderProfile) -> int:
-            return 0 if health_by_id[profile.provider_id] is ProviderHealthState.HEALTHY else 1
+        def _rank_key(profile: ProviderProfile) -> tuple[int, int]:
+            pref_score = 0
+            if requirements.preferred_provider and requirements.preferred_provider.lower() in profile.provider_id.lower():
+                pref_score = -1
+
+            h = health_by_id[profile.provider_id]
+            health_score = 0
+            if h is ProviderHealthState.HEALTHY:
+                health_score = 0
+            elif h is ProviderHealthState.DEGRADED:
+                health_score = 1
+            else:
+                health_score = 2
+
+            return (pref_score, health_score)
 
         candidates.sort(key=_rank_key)
         return candidates

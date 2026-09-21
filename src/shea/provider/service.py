@@ -66,8 +66,16 @@ class ProviderRoutingService:
         self._max_attempts = max_provider_attempts
 
     def generate(self, prompt: str) -> ModelResponse:
+        from dataclasses import replace
+        from shea.provider.context import preferred_provider_ctx
+        
+        reqs = self._requirements
+        preferred = preferred_provider_ctx.get()
+        if preferred:
+            reqs = replace(reqs, preferred_provider=preferred)
+
         eligible = self._router.eligible(
-            [(rp.profile, rp.health.state) for rp in self._providers], self._requirements
+            [(rp.profile, rp.health.state) for rp in self._providers], reqs
         )
 
         if not eligible:
@@ -78,8 +86,9 @@ class ProviderRoutingService:
                 action="generate",
                 result="denied",
                 metadata={
-                    "required_capabilities": sorted(self._requirements.required_capabilities),
-                    "require_local_only": self._requirements.require_local_only,
+                    "required_capabilities": sorted(reqs.required_capabilities),
+                    "require_local_only": reqs.require_local_only,
+                    "preferred_provider": reqs.preferred_provider,
                 },
             )
             raise NoEligibleProviderError(

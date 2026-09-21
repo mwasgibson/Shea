@@ -20,3 +20,4 @@ class RoutingRequirements:
     required_capabilities: frozenset[str] = field(default_factory=lambda: frozenset())
     context_size_estimate: int = 0
     require_local_only: bool = False
+    preferred_provider: str | None = None
