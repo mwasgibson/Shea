@@ -45,7 +45,9 @@ from shea.persistence.sqlite.intent_repository import SqliteIntentRepository
 from shea.persistence.sqlite.migrator import run_migrations
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
 from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAttemptRepository
+from shea.persistence.sqlite.request_repository import SqliteRequestRepository
 from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentRepository
+from shea.persistence.sqlite.session_repository import SqliteSessionRepository
 from shea.persistence.sqlite.task_repository import SqliteTaskRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
@@ -523,6 +525,20 @@ def intent_repository(
 
 
 @pytest.fixture
+def session_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork, clock: FrozenClock
+) -> SqliteSessionRepository:
+    return SqliteSessionRepository(conn, unit_of_work=unit_of_work, clock=clock)
+
+
+@pytest.fixture
+def request_repository(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> SqliteRequestRepository:
+    return SqliteRequestRepository(conn, unit_of_work=unit_of_work)
+
+
+@pytest.fixture
 def deterministic_matcher() -> DeterministicIntentMatcher:
     return DeterministicIntentMatcher()
 
@@ -545,6 +561,8 @@ def planning_service(
     tool_registry: ToolRegistry,
     intent_repository: SqliteIntentRepository,
     plan_repository: SqlitePlanRepository,
+    session_repository: SqliteSessionRepository,
+    request_repository: SqliteRequestRepository,
     audit_recorder: AuditRecorder,
     clock: FrozenClock,
     id_generator: SequentialIdGenerator,
@@ -557,6 +575,8 @@ def planning_service(
         tool_registry=tool_registry,
         intent_repository=intent_repository,
         plan_repository=plan_repository,
+        session_repository=session_repository,
+        request_repository=request_repository,
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,

@@ -21,6 +21,19 @@ from .enums import (
 
 
 @dataclass(frozen=True)
+class Session:
+    """Architecture doc entity tree: User -> Session -> Request/Task.
+    The conversational/environmental context Requests happen in — not a
+    Task and not owned by one. First-class and independently persisted
+    so a Request doesn't need a Task to have a home."""
+
+    id: str
+    actor: str
+    created_at: datetime
+    last_active_at: datetime
+
+
+@dataclass(frozen=True)
 class Request:
     """Technical doc Section 8.1."""
 
@@ -34,10 +47,13 @@ class Request:
 
 @dataclass(frozen=True)
 class Intent:
-    """Technical doc Section 8.2."""
+    """Technical doc Section 8.2. Owned by a Request (entity tree:
+    Session -> Request -> Intent), not by a Task — a Task is only created
+    if the intent turns out to need one, and finds its intent via
+    `Task.request_id`."""
 
     id: str
-    task_id: str
+    request_id: str
     type: str
     goal: str
     parameters: dict[str, Any] = field(default_factory=dict[str, Any])

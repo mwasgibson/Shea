@@ -122,7 +122,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             explicit_user_ack=True,
             run=not args.no_execute,
         )
-        print(f"task={result.task.id} state={result.task.state.value}")
+        if result.task is not None:
+            print(f"task={result.task.id} state={result.task.state.value}")
+        elif result.message is not None:
+            print(f"reply={result.message!r}")
         if result.error:
             print(f"error: {result.error}", file=sys.stderr)
             sys.exit(1)

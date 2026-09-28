@@ -8,16 +8,23 @@ from shea.contracts.models import Decision, Plan, Task
 from shea.core.orchestrator import Orchestrator
 from shea.execution.plan_runner import PlanRunner, PlanRunResult
 from shea.observability.context import active_context
+from shea.planning.exceptions import ConversationalReplyUnavailableError
 from shea.planning.service import PlanningOutcome, PlanningService
+from shea.understanding.exceptions import AmbiguousIntentError
 
 
 @dataclass(frozen=True)
 class InteractionResult:
-    """One user request through planning + multi-step execution."""
+    """One user request. `task` is None for a pure conversational reply
+    (`type == "query"`, no capability needed) — those never become a
+    Task; `message` carries the reply text in that case. Every other
+    request goes through planning + multi-step execution as before, and
+    `task` is populated exactly as it always was."""
 
     planning: PlanningOutcome | None
     run: PlanRunResult | None
-    task: Task
+    task: Task | None
+    message: str | None = None
     error: str | None = None
     pending_decision: Decision | None = None
     needs_confirmation: bool = False
@@ -53,11 +60,39 @@ class InteractionService:
         profile_id: str = "system",
     ) -> InteractionResult:
         try:
+            request = self._planning.open_request(
+                session_id=session_id, request_text=text, actor=actor
+            )
+            understanding = self._planning.understand(request=request)
+            draft = understanding.draft
+
+            if draft.type == "query":
+                # Pure conversation, no tool capability needed: answer
+                # directly. No Task, no Plan, no Decision/Authorization,
+                # no Execution/Verification ceremony for a greeting.
+                try:
+                    message = self._planning.answer_conversationally(draft)
+                except ConversationalReplyUnavailableError:
+                    message = (
+                        "I don't have a model configured to answer that conversationally."
+                    )
+                return InteractionResult(planning=None, run=None, task=None, message=message)
+
             planning = self._planning.create_and_plan(
                 session_id=session_id,
                 request_text=text,
                 actor=actor,
                 profile_id=profile_id,
+                request=request,
+                understanding=understanding,
+            )
+        except AmbiguousIntentError:
+            return InteractionResult(
+                planning=None,
+                run=None,
+                task=None,
+                message="I'm not sure what you mean — could you rephrase that?",
+                error="ambiguous_intent",
             )
         except Exception as e:
             import traceback
@@ -80,7 +115,7 @@ class InteractionService:
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC)
             )
-            synthetic_intent = Intent(id=task_id, task_id=task_id, type="chat", goal=text, source="api", created_at=datetime.now(UTC))
+            synthetic_intent = Intent(id=task_id, request_id=synthetic_task.request_id, type="chat", goal=text, source="api", created_at=datetime.now(UTC))
             return InteractionResult(
                 planning=PlanningOutcome(task=synthetic_task, intent=synthetic_intent, plan=Plan(id=task_id, task_id=task_id, objective=text, steps=[])),
                 run=None,

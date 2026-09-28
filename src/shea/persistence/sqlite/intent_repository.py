@@ -19,13 +19,13 @@ class SqliteIntentRepository:
             self._conn.execute(
                 """
                 INSERT INTO intents
-                    (id, task_id, type, goal, parameters, confidence, source, created_at)
+                    (id, request_id, type, goal, parameters, confidence, source, created_at)
                 VALUES
-                    (:id, :task_id, :type, :goal, :parameters, :confidence, :source, :created_at)
+                    (:id, :request_id, :type, :goal, :parameters, :confidence, :source, :created_at)
                 """,
                 {
                     "id": intent.id,
-                    "task_id": intent.task_id,
+                    "request_id": intent.request_id,
                     "type": intent.type,
                     "goal": intent.goal,
                     "parameters": json.dumps(intent.parameters),
@@ -35,19 +35,34 @@ class SqliteIntentRepository:
                 },
             )
 
-    def get_by_task(self, task_id: str) -> Intent | None:
+    def get_by_request(self, request_id: str) -> Intent | None:
         row = self._conn.execute(
-            "SELECT * FROM intents WHERE task_id = ?", (task_id,)
+            "SELECT * FROM intents WHERE request_id = ?", (request_id,)
         ).fetchone()
-        if row is None:
-            return None
-        return Intent(
-            id=row["id"],
-            task_id=row["task_id"],
-            type=row["type"],
-            goal=row["goal"],
-            parameters=json.loads(row["parameters"]),
-            confidence=row["confidence"],
-            source=row["source"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-        )
+        return _row_to_intent(row) if row is not None else None
+
+    def get_by_task(self, task_id: str) -> Intent | None:
+        """Convenience for callers that only hold a task id: resolves
+        Task -> request_id -> Intent."""
+        row = self._conn.execute(
+            """
+            SELECT i.* FROM intents i
+            JOIN tasks t ON t.request_id = i.request_id
+            WHERE t.id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+        return _row_to_intent(row) if row is not None else None
+
+
+def _row_to_intent(row: sqlite3.Row) -> Intent:
+    return Intent(
+        id=row["id"],
+        request_id=row["request_id"],
+        type=row["type"],
+        goal=row["goal"],
+        parameters=json.loads(row["parameters"]),
+        confidence=row["confidence"],
+        source=row["source"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )

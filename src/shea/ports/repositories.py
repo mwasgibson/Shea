@@ -10,11 +10,33 @@ from shea.contracts.models import (
     Plan,
     RecoveryAttempt,
     RecoveryDecisionRecord,
+    Request,
     RiskAssessment,
+    Session,
     Task,
     ToolExecutionRecord,
     VerificationRecord,
 )
+
+
+class SessionRepository(Protocol):
+    """Persists Session — the conversational context a Request happens
+    in, independent of whether any Task is ever created within it."""
+
+    def get_or_create(self, session_id: str, *, actor: str) -> Session: ...
+
+    def touch(self, session_id: str) -> None: ...
+
+
+class RequestRepository(Protocol):
+    """Persists Request — technical doc Section 8.1. A Request is what
+    the user said/asked; it exists whether or not it leads to a Task."""
+
+    def save(self, request: Request) -> None: ...
+
+    def get(self, request_id: str) -> Request | None: ...
+
+    def list_by_session(self, session_id: str) -> list[Request]: ...
 
 
 class TaskRepository(Protocol):
@@ -41,9 +63,12 @@ class PlanRepository(Protocol):
 
 
 class IntentRepository(Protocol):
-    """Persists Intent records — technical doc Section 8.2."""
+    """Persists Intent records — technical doc Section 8.2. Intents are
+    owned by a Request; `get_by_task` resolves through Task.request_id."""
 
     def save(self, intent: Intent) -> None: ...
+
+    def get_by_request(self, request_id: str) -> Intent | None: ...
 
     def get_by_task(self, task_id: str) -> Intent | None: ...
 

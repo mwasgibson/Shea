@@ -57,6 +57,7 @@ from shea.persistence.sqlite.app_recovery_repository import SqliteAppRecoveryRep
 from shea.persistence.sqlite.app_verification_repository import SqliteAppVerificationRepository
 from shea.persistence.sqlite.audit_sink import SqliteAuditSink
 from shea.persistence.sqlite.authorization_repository import SqliteAuthorizationRepository
+from shea.persistence.sqlite.chat_repository import SqliteChatRepository
 from shea.persistence.sqlite.connection import open_connection
 from shea.persistence.sqlite.decision_repository import SqliteDecisionRepository
 from shea.persistence.sqlite.intent_repository import SqliteIntentRepository
@@ -64,7 +65,9 @@ from shea.persistence.sqlite.memory_repository import SqliteMemoryRepository
 from shea.persistence.sqlite.migrator import run_migrations
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
 from shea.persistence.sqlite.recovery_attempt_repository import SqliteRecoveryAttemptRepository
+from shea.persistence.sqlite.request_repository import SqliteRequestRepository
 from shea.persistence.sqlite.risk_repository import SqliteRiskAssessmentRepository
+from shea.persistence.sqlite.session_repository import SqliteSessionRepository
 from shea.persistence.sqlite.task_repository import SqliteTaskRepository
 from shea.persistence.sqlite.tool_execution_repository import SqliteToolExecutionRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
@@ -89,7 +92,6 @@ from shea.tools.registry import ToolRegistry
 from shea.understanding.deterministic import DeterministicIntentMatcher
 from shea.verification.service import VerificationService
 from shea.verification.verifier import VerifierRegistry
-from shea.persistence.sqlite.chat_repository import SqliteChatRepository
 
 
 @dataclass
@@ -98,6 +100,9 @@ class SheaRuntime:
 
     conn: sqlite3.Connection
     chat_repository: SqliteChatRepository
+    session_repository: SqliteSessionRepository
+    request_repository: SqliteRequestRepository
+    intent_repository: SqliteIntentRepository
     plan_repository: SqlitePlanRepository
     interaction_service: InteractionService
     unit_of_work: SqliteUnitOfWork
@@ -237,6 +242,8 @@ def build_runtime(
     risk_repository = SqliteRiskAssessmentRepository(conn, unit_of_work=unit_of_work)
     authorization_repository = SqliteAuthorizationRepository(conn, unit_of_work=unit_of_work)
     intent_repository = SqliteIntentRepository(conn, unit_of_work=unit_of_work)
+    session_repository = SqliteSessionRepository(conn, unit_of_work=unit_of_work, clock=clock)
+    request_repository = SqliteRequestRepository(conn, unit_of_work=unit_of_work)
     tool_execution_repository = SqliteToolExecutionRepository(
         conn, unit_of_work=unit_of_work
     )
@@ -416,6 +423,8 @@ def build_runtime(
         tool_registry=registry,
         intent_repository=intent_repository,
         plan_repository=plan_repository,
+        session_repository=session_repository,
+        request_repository=request_repository,
         audit=audit,
         clock=clock,
         id_generator=id_generator,
@@ -465,6 +474,9 @@ def build_runtime(
     runtime = SheaRuntime(
         conn=conn,
         chat_repository=chat_repository,
+        session_repository=session_repository,
+        request_repository=request_repository,
+        intent_repository=intent_repository,
         plan_repository=plan_repository,
         unit_of_work=unit_of_work,
         orchestrator=orchestrator,

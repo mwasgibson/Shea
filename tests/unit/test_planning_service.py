@@ -12,6 +12,8 @@ from shea.model.exceptions import MalformedModelOutputError
 from shea.model.scripted import ScriptedModelProvider
 from shea.persistence.sqlite.intent_repository import SqliteIntentRepository
 from shea.persistence.sqlite.plan_repository import SqlitePlanRepository
+from shea.persistence.sqlite.request_repository import SqliteRequestRepository
+from shea.persistence.sqlite.session_repository import SqliteSessionRepository
 from shea.persistence.sqlite.unit_of_work import SqliteUnitOfWork
 from shea.planning.exceptions import PlanValidationError
 from shea.planning.service import PlanningOutcome, PlanningService
@@ -132,6 +134,8 @@ def test_model_fallback_builds_plan_when_no_template(
     tool_registry: ToolRegistry,
     intent_repository: SqliteIntentRepository,
     plan_repository: SqlitePlanRepository,
+    session_repository: SqliteSessionRepository,
+    request_repository: SqliteRequestRepository,
     unit_of_work: SqliteUnitOfWork,
     audit_recorder: AuditRecorder,
     clock: Clock,
@@ -167,6 +171,8 @@ def test_model_fallback_builds_plan_when_no_template(
         tool_registry=tool_registry,
         intent_repository=intent_repository,
         plan_repository=plan_repository,
+        session_repository=session_repository,
+        request_repository=request_repository,
         audit=audit_recorder,
         clock=clock,
         id_generator=id_generator,

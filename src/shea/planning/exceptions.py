@@ -16,3 +16,13 @@ class PlanValidationError(Exception):
         self.plan_id = plan_id
         self.reason = reason
         super().__init__(f"Plan {plan_id!r} failed validation: {reason}")
+
+
+class ConversationalReplyUnavailableError(Exception):
+    """Raised by `PlanningService.answer_conversationally()` when a pure
+    `type == \"query\"` intent needs a direct reply but no model
+    provider is configured to produce one."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)

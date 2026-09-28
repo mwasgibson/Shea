@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Annotated, Any, cast
 from uuid import uuid4
 
-from fastapi import UploadFile, File
-import shutil
-from pathlib import Path
-import os
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sse_starlette.sse import EventSourceResponse
 
 from shea.api.contracts import ChatRequest, ChatResponse, ConfirmRequest
@@ -101,7 +100,7 @@ def submit_chat(
                 msg_text += f"- {att.get('name')} -> {att.get('path')}\n"
 
         # Save user message to chat history
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
         runtime.chat_repository.save_event(
             event_id=uuid4().hex,
             session_id=session_id,
@@ -122,9 +121,11 @@ def submit_chat(
         )
 
         needs_confirmation = result.error == "authorization_required"
-        
+
         response_text = "Requires confirmation" if needs_confirmation else "Done."
-        if result.task:
+        if result.message is not None:
+            response_text = result.message
+        elif result.task:
             if result.task.state.value == "FAILED":
                 response_text = "Error: Task failed during execution."
             else:
@@ -142,7 +143,7 @@ def submit_chat(
                     
         if response_text not in ("Requires confirmation", "Done."):
             # Save agent reply to DB so history works
-            from datetime import datetime, UTC
+            from datetime import UTC, datetime
             runtime.chat_repository.save_event(
                 event_id=uuid4().hex,
                 session_id=session_id,
@@ -200,7 +201,7 @@ def confirm_task(
                     break
                 
     if response_text not in ("Confirmed and executed.", "Cancelled by user.") and not result.error:
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
         runtime.chat_repository.save_event(
             event_id=uuid4().hex,
             session_id=pending.session_id,

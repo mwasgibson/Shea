@@ -1,6 +1,7 @@
-# src/shea/api/routes/tools.py
-from fastapi import APIRouter, Depends, Request
 from typing import Annotated, cast
+
+from fastapi import APIRouter, Depends, Request
+
 from shea.bootstrap import SheaRuntime
 
 router = APIRouter(prefix="/tools", tags=["Tools"])

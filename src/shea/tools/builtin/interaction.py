@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from shea.contracts.models import ToolRequest, ToolResponse
-from shea.tools.registry import ToolDeclaration, ToolRegistry
 from shea.decision.risk import RiskLevel
+from shea.tools.registry import ToolDeclaration, ToolRegistry
 
 
 def register_interaction_tools(registry: ToolRegistry) -> None:

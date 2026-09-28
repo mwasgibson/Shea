@@ -67,7 +67,9 @@ def chat(db_path: str, workspace: str) -> None:
             
             if result.error:
                 click.secho(f"Error: {result.error}", fg="red")
-            else:
+            elif result.message is not None:
+                click.secho(f"[Agent] {result.message}", fg="green")
+            elif result.task is not None:
                 click.secho(f"Task Complete: {result.task.id}", fg="green")
 
         except (KeyboardInterrupt, EOFError):

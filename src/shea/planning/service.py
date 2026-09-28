@@ -12,7 +12,12 @@ from shea.model.exceptions import MalformedModelOutputError
 from shea.ports.clock import Clock
 from shea.ports.id_generator import IdGenerator
 from shea.ports.model_provider import ModelProvider
-from shea.ports.repositories import IntentRepository, PlanRepository
+from shea.ports.repositories import (
+    IntentRepository,
+    PlanRepository,
+    RequestRepository,
+    SessionRepository,
+)
 from shea.ports.unit_of_work import UnitOfWork
 from shea.profiles.snapshot import ProfileSnapshot
 from shea.tools.registry import ToolRegistry
@@ -20,7 +25,7 @@ from shea.understanding.deterministic import DeterministicIntentMatcher, IntentD
 from shea.understanding.exceptions import AmbiguousIntentError
 from shea.understanding.parser import DEFAULT_CONFIDENCE_THRESHOLD, IntentParser
 
-from .exceptions import PlanValidationError
+from .exceptions import ConversationalReplyUnavailableError, PlanValidationError
 from .templates import PlanTemplateRegistry, StepBlueprint
 from .validator import validate_plan
 
@@ -79,6 +84,17 @@ def _blueprints_from_model_data(data: object) -> list[StepBlueprint]:
 
 
 @dataclass(frozen=True)
+class Understanding:
+    """Result of understanding a Request: the persisted, Request-owned
+    Intent plus the draft it came from (the draft is what templates and
+    the planner consume). Exists before, and independently of, any
+    Task."""
+
+    intent: Intent
+    draft: IntentDraft
+
+
+@dataclass(frozen=True)
 class PlanningOutcome:
     task: Task
     intent: Intent
@@ -127,6 +143,8 @@ class PlanningService:
         tool_registry: ToolRegistry,
         intent_repository: IntentRepository,
         plan_repository: PlanRepository,
+        session_repository: SessionRepository,
+        request_repository: RequestRepository,
         audit: AuditRecorder,
         clock: Clock,
         id_generator: IdGenerator,
@@ -144,6 +162,8 @@ class PlanningService:
         self._tools = tool_registry
         self._intents = intent_repository
         self._plans = plan_repository
+        self._sessions = session_repository
+        self._requests = request_repository
         self._audit = audit
         self._clock = clock
         self._ids = id_generator
@@ -174,6 +194,71 @@ class PlanningService:
         except Exception:
             return ""
     
+    def open_request(
+        self,
+        *,
+        session_id: str,
+        request_text: str,
+        actor: str = "user",
+        source: str = "text",
+    ) -> Request:
+        """Persists Session + Request independently of any Task —
+        architecture doc entity tree: User -> Session -> Request. Every
+        request gets a durable home whether or not it turns out to need
+        a Task."""
+        self._sessions.get_or_create(session_id, actor=actor)
+        request = Request(
+            request_id=self._ids.new_id(),
+            session_id=session_id,
+            actor=actor,
+            input=request_text,
+            source=source,
+            created_at=self._clock.now(),
+        )
+        self._requests.save(request)
+        self._sessions.touch(session_id)
+        return request
+
+    def understand(self, *, request: Request, source: str = "text") -> Understanding:
+        """Task-less intent parsing: no Task exists yet, so failures are
+        audited against the Request only (no `task_id`, no
+        `Orchestrator.advance()` — there is no task state to advance).
+        On success the Intent is persisted, owned by the Request."""
+        try:
+            parsed = self._intent_parser.parse(request.input)
+        except AmbiguousIntentError as exc:
+            self._audit.record(
+                actor="planning_service",
+                component="understanding.engine",
+                event_type="understanding.ambiguous",
+                action="understand",
+                result="blocked",
+                request_id=request.request_id,
+                metadata={"confidence": exc.draft.confidence, "goal": exc.draft.goal},
+            )
+            raise
+        except MalformedModelOutputError as exc:
+            self._audit.record(
+                actor="planning_service",
+                component="understanding.engine",
+                event_type="understanding.malformed_output",
+                action="understand",
+                result="failed",
+                request_id=request.request_id,
+                metadata={"error": str(exc)},
+            )
+            raise
+        draft = IntentDraft(
+            type=parsed.type,
+            goal=parsed.goal,
+            parameters=parsed.parameters,
+            confidence=parsed.confidence,
+            source=source,
+        )
+        intent = self._new_intent(request.request_id, draft)
+        self._intents.save(intent)
+        return Understanding(intent=intent, draft=draft)
+
     def create_and_plan(
         self,
         *,
@@ -183,15 +268,18 @@ class PlanningService:
         source: str = "text",
         profile_id: str = "system",
         profile_snapshot: ProfileSnapshot | None = None,
+        request: Request | None = None,
+        understanding: Understanding | None = None,
     ) -> PlanningOutcome:
-        request = Request(
-            request_id=self._ids.new_id(),
-            session_id=session_id,
-            actor=actor,
-            input=request_text,
-            source=source,
-            created_at=self._clock.now(),
-        )
+        """Builds a Task/Plan for a Request that needs one. `request`
+        and `understanding` may be supplied already-produced (by a caller
+        that went through `open_request()` + `understand()` first to
+        decide whether a Task is warranted at all) to avoid re-parsing;
+        when omitted they are produced here."""
+        if request is None:
+            request = self.open_request(
+                session_id=session_id, request_text=request_text, actor=actor, source=source
+            )
         snapshot = profile_snapshot or ProfileSnapshot(
             profile_id=profile_id,
             name=profile_id,
@@ -204,8 +292,13 @@ class PlanningService:
         )
         task = self._orchestrator.advance(task.id, "start_planning")
 
-        draft = self._parse_intent(task, request_text, source=source)
-        intent = self._persist_intent(task, draft, profile_snapshot=snapshot)
+        intent_already_saved = understanding is not None
+        if understanding is None:
+            draft = self._parse_intent(task, request_text, source=source)
+            intent = self._new_intent(request.request_id, draft)
+        else:
+            draft = understanding.draft
+            intent = understanding.intent
         mem_block = self._memory_context_block(profile_id=snapshot.profile_id, goal=draft.goal)
         if mem_block:
             # enrich goal for template/model only — does not grant capability
@@ -219,7 +312,8 @@ class PlanningService:
         plan = self._build_and_validate_plan(task, intent, draft)
 
         with self._uow:
-            self._intents.save(intent)
+            if not intent_already_saved:
+                self._intents.save(intent)
             self._plans.save(plan)
             self._orchestrator.attach_plan(task.id, plan.id)
             ready_task = self._orchestrator.advance(task.id, "plan_ready")
@@ -275,27 +369,17 @@ class PlanningService:
             self._orchestrator.advance(task.id, "plan_failed")
             raise
 
-    def _persist_intent(
-        self,
-        task: Task,
-        draft: IntentDraft,
-        *,
-        profile_snapshot: ProfileSnapshot,
-    ) -> Intent:
-        parameters = dict(draft.parameters)
-        parameters.update(profile_snapshot.to_parameters())
+    def _new_intent(self, request_id: str, draft: IntentDraft) -> Intent:
         return Intent(
             id=self._ids.new_id(),
-            task_id=task.id,
+            request_id=request_id,
             type=draft.type,
             goal=draft.goal,
-            parameters=parameters,
+            parameters=dict(draft.parameters),
             confidence=draft.confidence,
             source=draft.source,
             created_at=self._clock.now(),
         )
-        # Intent save and its audit record are wrapped in _uow by the caller
-        # (create_and_plan) to be part of the larger transaction
 
     def _build_and_validate_plan(self, task: Task, intent: Intent, draft: IntentDraft) -> Plan:
         blueprints = self._templates.build(intent.type, draft)
@@ -334,10 +418,24 @@ class PlanningService:
 
         return plan
 
+    def answer_conversationally(self, draft: IntentDraft) -> str:
+        """Direct reply for a pure `type == \"query\"` intent — no Task,
+        no Plan, no `system.reply` tool wrapper. The model is asked once
+        for a plain-text answer, not for JSON it has to be unwrapped
+        from afterwards."""
+        if self._model is None:
+            raise ConversationalReplyUnavailableError(
+                "conversational reply requested but no model provider configured"
+            )
+        mem_block = self._memory_context_block(profile_id="system", goal=draft.goal)
+        prompt = draft.goal if not mem_block else f"{draft.goal}\n\n{mem_block}"
+        response = self._model.generate(prompt)
+        return response.content
+
     def _plan_from_model(self, intent: Intent) -> list[StepBlueprint]:
         if self._model is None:
             raise PlanValidationError(
-                intent.task_id, "no plan template matched and no model provider configured"
+                intent.request_id, "no plan template matched and no model provider configured"
             )
         def _get_schema_keys(decl: Any) -> str:
             schema = decl.argument_schema

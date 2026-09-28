@@ -67,6 +67,7 @@ class ProviderRoutingService:
 
     def generate(self, prompt: str) -> ModelResponse:
         from dataclasses import replace
+
         from shea.provider.context import preferred_provider_ctx
         
         reqs = self._requirements
