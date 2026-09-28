@@ -104,6 +104,9 @@ class ProviderRoutingService:
             try:
                 response = registered.provider.generate(prompt)
             except Exception as exc:
+                import sys, traceback
+                print(f"Provider {profile.provider_id} failed: {exc}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
                 category = classify_exception(exc)
                 registered.health.record_failure()
                 attempts.append((profile.provider_id, category.value))

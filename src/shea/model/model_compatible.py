@@ -123,7 +123,7 @@ class ModelCompatibleProvider:
                 content = payload["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise MalformedModelOutputError(
-                    "provider response missing choices[0].message.content"
+                    f"provider response missing choices[0].message.content. Payload: {json.dumps(payload)[:500]}"
                 ) from exc
 
             finish_reason = str(
@@ -148,11 +148,6 @@ class ModelCompatibleProvider:
             )
         except json.JSONDecodeError:
             structured = None
-
-        if structured is None:
-            raise MalformedModelOutputError(
-                f"model content was not a JSON object: {content!r}"
-            )
 
         return ModelResponse(
             content=content,
