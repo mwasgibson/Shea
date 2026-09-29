@@ -16,7 +16,7 @@ def _build_intent_prompt(text: str) -> str:
         "Extract a structured intent from the following user request. "
         "Reply with a single JSON object only, exact shape: "
         '{"type": "task" or "query", "goal": "what to accomplish", "parameters": {}, "confidence": 0.0 to 1.0}\n'
-        "IMPORTANT: If the user is just saying hello, greeting, or being conversational, set type='query', goal='respond conversationally', and confidence=1.0.\n\n"
+        "IMPORTANT: If the user is just saying hello, greeting, asking factual questions, requesting information, or being conversational, set type='query' and set 'goal' to the user's explicit question or statement (do not just say 'respond conversationally'). ONLY use 'task' if the user wants to execute a command, modify a file, or perform an action.\n\n"
         f"User request: {text}"
     )
 

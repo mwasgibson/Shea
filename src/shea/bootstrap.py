@@ -39,7 +39,13 @@ from shea.decision.policy import PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
 from shea.events.bus import EventBus
-from shea.events.channels import CredentialChannel, DecisionChannel, SecurityChannel, TaskChannel
+from shea.events.channels import (
+    CredentialChannel,
+    DecisionChannel,
+    InteractionChannel,
+    SecurityChannel,
+    TaskChannel,
+)
 from shea.execution.permit import ExecutionPermitAuthority
 from shea.execution.plan_runner import PlanRunner
 from shea.execution.service import ExecutionService
@@ -461,6 +467,7 @@ def build_runtime(
         event_bus=event_bus,
         memory_broker=memory_broker,
         intent_repository=intent_repository,
+        request_repository=request_repository,
         tool_execution_repository=tool_execution_repository,
         model_provider=provider,
     )
@@ -469,6 +476,8 @@ def build_runtime(
         planning_service=planning_service,
         plan_runner=plan_runner,
         orchestrator=orchestrator,
+        request_repository=request_repository,
+        interaction_channel=InteractionChannel(event_bus, clock, id_generator),
     )
 
     runtime = SheaRuntime(
@@ -506,3 +515,10 @@ def build_runtime(
     plugin_loader = PluginLoader(plugin_dir=f"{workspace}/plugins")
     plugin_loader.load_plugins(runtime)
     return runtime
+if __name__ == "__main__":
+    import os
+    print("Initializing SHEA Runtime and migrating database...")
+    db_path = os.environ.get("SHEA_DB_PATH", "shea.db")
+    workspace = os.environ.get("SHEA_WORKSPACE", "./workspace")
+    runtime = build_runtime(db_path=db_path, workspace=workspace)
+    print(f"Success. Database created at {db_path}")

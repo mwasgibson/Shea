@@ -17,8 +17,12 @@ class SqliteRequestRepository:
         with self._uow:
             self._conn.execute(
                 """
-                INSERT INTO requests (request_id, session_id, actor, input, source, created_at)
-                VALUES (:request_id, :session_id, :actor, :input, :source, :created_at)
+                INSERT INTO requests
+                (request_id, session_id, actor, input, source,
+                created_at, profile_id, response)
+                VALUES
+                (:request_id, :session_id, :actor, :input, :source,
+                :created_at, :profile_id, :response)
                 """,
                 {
                     "request_id": request.request_id,
@@ -27,7 +31,16 @@ class SqliteRequestRepository:
                     "input": request.input,
                     "source": request.source,
                     "created_at": request.created_at.isoformat(),
+                    "profile_id": request.profile_id,
+                    "response": request.response,
                 },
+            )
+
+    def record_response(self, request_id: str, response: str) -> None:
+        with self._uow:
+            self._conn.execute(
+                "UPDATE requests SET response = ? WHERE request_id = ?",
+                (response, request_id),
             )
 
     def get(self, request_id: str) -> Request | None:
@@ -54,4 +67,6 @@ def _row_to_request(row: sqlite3.Row) -> Request:
         input=row["input"],
         source=row["source"],
         created_at=datetime.fromisoformat(row["created_at"]),
+        profile_id=row["profile_id"],
+        response=row["response"],
     )

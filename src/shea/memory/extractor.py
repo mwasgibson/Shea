@@ -9,30 +9,41 @@ from shea.events.contracts import Event
 from shea.memory.broker import MemoryBroker
 from shea.memory.contracts import MemoryProposal, MemoryType
 from shea.ports.model_provider import ModelProvider
-from shea.ports.repositories import IntentRepository, ToolExecutionRepository
+from shea.ports.repositories import (
+    IntentRepository,
+    RequestRepository,
+    ToolExecutionRepository,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryExtractor:
-    """Listens for task completion events and extracts important facts/preferences using an LLM."""
+    """Extracts important facts/preferences using an LLM, from two sources:
+    completed tasks (`task.state_changed` -> COMPLETED) and conversational
+    turns that never became a task (`interaction.conversation_turn`)."""
 
     def __init__(
         self,
         event_bus: EventBus,
         memory_broker: MemoryBroker,
         intent_repository: IntentRepository,
+        request_repository: RequestRepository,
         tool_execution_repository: ToolExecutionRepository,
         model_provider: ModelProvider,
     ) -> None:
         self._bus = event_bus
         self._broker = memory_broker
         self._intent_repo = intent_repository
+        self._request_repo = request_repository
         self._tool_repo = tool_execution_repository
         self._model = model_provider
         
         # Subscribe to task state changes
         self._bus.subscribe("task.state_changed", self._on_task_state_changed, handler_priority=10)
+        self._bus.subscribe(
+            "interaction.conversation_turn", self._on_conversation_turn, handler_priority=10
+        )
 
     def _on_task_state_changed(self, event: Event) -> None:
         payload = event.payload
@@ -43,13 +54,28 @@ class MemoryExtractor:
             logger.info(f"Task {task_id} completed. Initiating LLM memory extraction...")
             self._extract_from_task(task_id, event.correlation_id)
 
+    def _on_conversation_turn(self, event: Event) -> None:
+        request_id = event.payload.get("request_id")
+        if not request_id:
+            return
+        request = self._request_repo.get(request_id)
+        if request is None or request.response is None:
+            return
+        transcript = f"User said: {request.input}\nAssistant replied: {request.response}\n\n"
+        self._extract(
+            transcript,
+            profile_id=request.profile_id,
+            task_id=None,
+            request_id=request_id,
+        )
+
     def _extract_from_task(self, task_id: str, request_id: str | None) -> None:
         intent = self._intent_repo.get_by_task(task_id)
         if not intent:
             return
 
         executions = self._tool_repo.list_by_task(task_id)
-        
+
         # Build prompt to extract memories
         transcript = f"User Goal: {intent.goal}\n"
         transcript += f"Intent Type: {intent.type}\n\n"
@@ -57,8 +83,21 @@ class MemoryExtractor:
             transcript += f"Tool: {ex.tool} Action: {ex.action} Success: {ex.success}\n"
             if ex.data:
                 transcript += f"Result: {ex.data}\n"
-                
-        prompt = f"""Analyze the following task transcript and extract any persistent facts or user preferences.
+
+        # Profile attribution lives on the Request. Legacy intents (pre-0014
+        # requests were never persisted) still carry it in their parameters.
+        request = self._request_repo.get(intent.request_id)
+        profile_id = (
+            request.profile_id
+            if request is not None
+            else str(intent.parameters.get("profile_id", "default_user"))
+        )
+        self._extract(transcript, profile_id=profile_id, task_id=task_id, request_id=request_id)
+
+    def _extract(
+        self, transcript: str, *, profile_id: str, task_id: str | None, request_id: str | None
+    ) -> None:
+        prompt = f"""Analyze the following transcript and extract any persistent facts or user preferences.
 A PREFERENCE is something the user explicitly wants or prefers (e.g. "I like dark mode", "always use JSON").
 A FACT is a concrete objective reality established during the task.
 
@@ -90,8 +129,6 @@ If there is nothing persistent to remember, return {{"memories": []}}.
             logger.error(f"Failed to parse memory extraction: {e}")
             return
             
-        profile_id = intent.parameters.get("profile_id", "default_user")
-
         for item in extracted:
             content = item.get("content")
             mem_type_str = item.get("type", "FACT").upper()

@@ -38,6 +38,12 @@ class MemoryBroker:
 
     def propose(self, proposal: MemoryProposal) -> None:
         """Process a proposed memory through the trust pipeline."""
+        provenance = proposal.request_id or proposal.task_id
+        if provenance is None:
+            # Strict provenance binding: a memory nothing can be traced to
+            # is never committed.
+            logger.warning("Rejecting memory proposal with no request_id or task_id.")
+            return
         logger.info(f"Processing memory proposal: {proposal.content[:50]}...")
         
         # 1. Sensitivity Analysis
@@ -74,7 +80,7 @@ class MemoryBroker:
             type=proposal.type,
             content=proposal.content,
             source=proposal.source,
-            provenance=proposal.request_id or proposal.task_id,
+            provenance=provenance,
             created_at=now,
             updated_at=now,
             expires_at=expires_at,

@@ -43,6 +43,8 @@ class Request:
     input: str
     source: str
     created_at: datetime
+    profile_id: str = "system"
+    response: str | None = None
 
 
 @dataclass(frozen=True)

@@ -54,7 +54,7 @@ class ModelCompatibleProvider:
                 {"role": "user", "content": prompt},
             ],
         }
-        if self.use_json_response_format:
+        if self.use_json_response_format and "json" in prompt.lower():
             body["response_format"] = {"type": "json_object"}
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
@@ -134,12 +134,30 @@ class ModelCompatibleProvider:
         if not isinstance(content, str):
             raise MalformedModelOutputError("message content must be str")
 
-        # Strip markdown fences if the model wrapped the JSON in ```json ... ```
+        import re
         clean_content = content.strip()
-        if clean_content.startswith("```"):
-            clean_content = clean_content.strip("`")
-            if clean_content.startswith("json"):
-                clean_content = clean_content[4:].strip()
+        thinking = None
+        
+        # 1. Check for explicit <think> tags (used by some models)
+        think_match = re.search(r"<think>(.*?)</think>", clean_content, re.DOTALL)
+        if think_match:
+            thinking = think_match.group(1).strip()
+            clean_content = clean_content[:think_match.start()] + clean_content[think_match.end():]
+            clean_content = clean_content.strip()
+
+        # 2. Check for JSON blocks (only if the prompt likely requested JSON)
+        if "json" in prompt.lower():
+            match = re.search(r"```(?:json)?\n?(.*?)\n?```", clean_content, re.DOTALL)
+            if match:
+                if not thinking:
+                    thinking = clean_content[:match.start()].strip()
+                clean_content = match.group(1).strip()
+            else:
+                match = re.search(r"(\{.*\})", clean_content, re.DOTALL)
+                if match:
+                    if not thinking:
+                        thinking = clean_content[:match.start()].strip()
+                    clean_content = match.group(1).strip()
 
         try:
             parsed = json.loads(clean_content)
@@ -150,12 +168,13 @@ class ModelCompatibleProvider:
             structured = None
 
         return ModelResponse(
-            content=content,
+            content=clean_content,
             structured_data=structured,
             finish_reason=finish_reason,
             metadata={
                 "provider": self.name,
                 "model": self.model,
                 "id": response_id,
+                "thinking": thinking,
             },
         )

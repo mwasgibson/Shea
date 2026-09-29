@@ -95,9 +95,9 @@ def test_migration_0013_repoints_existing_intents_at_their_task_request(
     )
     db.commit()
 
-    applied = run_migrations(db)  # full migration set: only 0013 is new
+    applied = run_migrations(db)  # full migration set: 0013+ are new
 
-    assert applied == ["0013_intent_request_ownership"]
+    assert "0013_intent_request_ownership" in applied
     row = db.execute("SELECT request_id FROM intents WHERE id = 'intent-legacy'").fetchone()
     assert row["request_id"] == "req-legacy"
     db.close()

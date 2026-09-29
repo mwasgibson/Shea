@@ -109,6 +109,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                         content = typed_data.get("content")
                         if isinstance(content, str) and content.strip():
                             print(content)
+                    elif isinstance(data, str) and data.strip():
+                        print(data)
                     if step_result.response.error:
                         print(f"Step Error: {step_result.response.error}", file=sys.stderr)
             else:

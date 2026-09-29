@@ -28,7 +28,7 @@ def get_runtime(request: Request) -> SheaRuntime:
 @router.post("/upload")
 async def upload_file(
     runtime: Annotated[SheaRuntime, Depends(get_runtime)],
-    file: UploadFile = File(...),
+    file: Annotated[UploadFile, File(...)],
 ) -> dict[str, str]:
     workspace = Path(os.environ.get("SHEA_WORKSPACE", "./workspace")).resolve()
     uploads_dir = workspace / "uploads"
@@ -140,6 +140,12 @@ def submit_chat(
                         elif step.state == "FAILED":
                             response_text = f"Error: Step '{step.tool}' failed."
                             break
+                            
+            if response_text == "Done." and result.run and result.run.step_results:
+                # If no explicit system.reply was provided but tools returned data
+                last_step = result.run.step_results[-1]
+                if last_step.response.success and isinstance(last_step.response.data, str) and last_step.response.data.strip():
+                    response_text = last_step.response.data
                     
         if response_text not in ("Requires confirmation", "Done."):
             # Save agent reply to DB so history works

@@ -114,3 +114,38 @@ def test_handle_text_conversational_query_persists_request(tmp_path: Path) -> No
     assert intent is not None
     assert intent.type == "query"
     runtime.conn.close()
+
+
+def test_conversational_turn_is_remembered_under_the_requests_profile(tmp_path: Path) -> None:
+    """End to end: chat (no Task) -> reply recorded -> memory extracted
+    and stored under the profile the request was made with."""
+    provider = ScriptedModelProvider()
+    provider.queue_response(
+        ModelResponse(
+            content="",
+            structured_data={"type": "query", "goal": "chat", "confidence": 1.0},
+        )
+    )
+    provider.queue_response(ModelResponse(content="Got it, JSON from now on."))
+    provider.queue_response(
+        ModelResponse(
+            content="",
+            structured_data={
+                "memories": [{"type": "PREFERENCE", "content": "user wants JSON answers"}]
+            },
+        )
+    )
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    result = runtime.interaction_service.handle_text(
+        "from now on answer in JSON", profile_id="work", run=True
+    )
+
+    assert result.task is None
+    request = runtime.request_repository.list_by_session("cli")[0]
+    assert request.profile_id == "work"
+    assert request.response == "Got it, JSON from now on."
+    stored = runtime.memory_service.list_active("work")
+    assert [m.content for m in stored] == ["user wants JSON answers"]
+    assert stored[0].provenance == request.request_id
+    runtime.conn.close()

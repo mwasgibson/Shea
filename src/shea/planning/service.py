@@ -38,9 +38,7 @@ def _build_plan_prompt(intent: Intent, available_tools: list[str]) -> str:
         "Produce a JSON object with a 'steps' array to accomplish this goal. "
         'Reply with a single JSON object only, exact shape: {"steps":[{"tool": "string", "action": "string", "arguments": {"key": "value"}, "description": "string"}]}. '
         "Empty steps are invalid. Use only tools listed below.\n"
-        "IMPORTANT: If the user expects a conversational response, a summary, or the result of a read operation, "
-        "you MUST include a final step using the `system.reply` tool to deliver the message back to the user.\n"
-        'Example: {"steps": [{"tool": "system.reply", "action": "Reply to user", "arguments": {"message": "Hello!"}, "description": "Greeting"}]}\n\n'
+
         f"System Time: {current_time}\n\n"
         "Available Tools:\n"
         f"{tools_block}\n\n"
@@ -201,6 +199,7 @@ class PlanningService:
         request_text: str,
         actor: str = "user",
         source: str = "text",
+        profile_id: str = "system",
     ) -> Request:
         """Persists Session + Request independently of any Task —
         architecture doc entity tree: User -> Session -> Request. Every
@@ -214,6 +213,7 @@ class PlanningService:
             input=request_text,
             source=source,
             created_at=self._clock.now(),
+            profile_id=profile_id,
         )
         self._requests.save(request)
         self._sessions.touch(session_id)
@@ -278,7 +278,11 @@ class PlanningService:
         when omitted they are produced here."""
         if request is None:
             request = self.open_request(
-                session_id=session_id, request_text=request_text, actor=actor, source=source
+                session_id=session_id,
+                request_text=request_text,
+                actor=actor,
+                source=source,
+                profile_id=profile_snapshot.profile_id if profile_snapshot else profile_id,
             )
         snapshot = profile_snapshot or ProfileSnapshot(
             profile_id=profile_id,
@@ -418,7 +422,7 @@ class PlanningService:
 
         return plan
 
-    def answer_conversationally(self, draft: IntentDraft) -> str:
+    def answer_conversationally(self, draft: IntentDraft, *, profile_id: str) -> str:
         """Direct reply for a pure `type == \"query\"` intent — no Task,
         no Plan, no `system.reply` tool wrapper. The model is asked once
         for a plain-text answer, not for JSON it has to be unwrapped
@@ -427,10 +431,14 @@ class PlanningService:
             raise ConversationalReplyUnavailableError(
                 "conversational reply requested but no model provider configured"
             )
-        mem_block = self._memory_context_block(profile_id="system", goal=draft.goal)
+        mem_block = self._memory_context_block(profile_id=profile_id, goal=draft.goal)
         prompt = draft.goal if not mem_block else f"{draft.goal}\n\n{mem_block}"
         response = self._model.generate(prompt)
-        return response.content
+        content = response.content
+        thinking = response.metadata.get("thinking")
+        if thinking:
+            content = f"🤔 *Thinking...*\n> {thinking.replace(chr(10), chr(10)+'> ')}\n\n{content}"
+        return content
 
     def _plan_from_model(self, intent: Intent) -> list[StepBlueprint]:
         if self._model is None:

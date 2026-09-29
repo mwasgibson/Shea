@@ -379,3 +379,29 @@ class DecisionChannel:
 
     def authorized(self, task_id: str, granted: bool, request_id: str | None = None) -> None:
         self._emit("decision.authorized", {"task_id": task_id, "granted": granted}, correlation_id=request_id)
+
+class InteractionChannel:
+    """Events for user-facing interaction that never becomes a Task.
+
+    Task-backed work is announced by `TaskChannel`; a pure conversational
+    turn has no task, so it gets its own event. Payloads carry ids only —
+    subscribers look content up from the Request, so message text never
+    travels through the bus into logs/sinks.
+    """
+
+    def __init__(self, bus: EventBus, clock: Clock, id_generator: IdGenerator) -> None:
+        self._bus = bus
+        self._clock = clock
+        self._ids = id_generator
+
+    def conversation_turn(self, *, request_id: str, session_id: str) -> None:
+        self._bus.publish(
+            Event(
+                event_id=self._ids.new_id(),
+                event_type="interaction.conversation_turn",
+                source="interaction",
+                timestamp=self._clock.now(),
+                payload={"request_id": request_id, "session_id": session_id},
+                correlation_id=request_id,
+            )
+        )

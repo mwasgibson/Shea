@@ -82,6 +82,6 @@ class MemoryProposal:
     type: MemoryType
     content: str
     source: str               # e.g., 'llm_extraction', 'user_explicit'
-    task_id: str              # Used for strict provenance binding
+    task_id: str | None       # Set when a task produced it; request_id is the primary provenance
     request_id: str | None
     base_confidence: float = 0.5

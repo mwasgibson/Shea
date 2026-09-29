@@ -42,7 +42,7 @@ def configure_tracing(level: int = logging.INFO) -> None:
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
         
-    handler = logging.StreamHandler()
+    handler = logging.FileHandler(".shea_logs.json")
     handler.setFormatter(JsonFormatter())
     handler.addFilter(StructuredTracer())
     

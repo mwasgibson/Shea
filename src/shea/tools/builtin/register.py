@@ -30,6 +30,6 @@ def register_builtin_tools(
 
     load_tools(registry, providers, verifier_registry=verifier_registry)
 
-    # Register the system.reply tool for conversational output
-    from shea.tools.builtin.interaction import register_interaction_tools
-    register_interaction_tools(registry)
+    # Register the system.browser_open tool for opening URLs
+    from shea.tools.builtin.browser import register_browser_tools
+    register_browser_tools(registry)

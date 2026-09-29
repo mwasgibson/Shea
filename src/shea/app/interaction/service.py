@@ -6,10 +6,12 @@ from typing import Any
 from shea.contracts.enums import TaskState
 from shea.contracts.models import Decision, Plan, Task
 from shea.core.orchestrator import Orchestrator
+from shea.events.channels import InteractionChannel
 from shea.execution.plan_runner import PlanRunner, PlanRunResult
 from shea.observability.context import active_context
 from shea.planning.exceptions import ConversationalReplyUnavailableError
 from shea.planning.service import PlanningOutcome, PlanningService
+from shea.ports.repositories import RequestRepository
 from shea.understanding.exceptions import AmbiguousIntentError
 
 
@@ -44,10 +46,14 @@ class InteractionService:
         planning_service: PlanningService,
         plan_runner: PlanRunner,
         orchestrator: Orchestrator,
+        request_repository: RequestRepository,
+        interaction_channel: InteractionChannel,
     ) -> None:
         self._planning = planning_service
         self._runner = plan_runner
         self._orchestrator = orchestrator
+        self._requests = request_repository
+        self._channel = interaction_channel
 
     def handle_text(
         self,
@@ -61,7 +67,7 @@ class InteractionService:
     ) -> InteractionResult:
         try:
             request = self._planning.open_request(
-                session_id=session_id, request_text=text, actor=actor
+                session_id=session_id, request_text=text, actor=actor, profile_id=profile_id
             )
             understanding = self._planning.understand(request=request)
             draft = understanding.draft
@@ -71,11 +77,20 @@ class InteractionService:
                 # directly. No Task, no Plan, no Decision/Authorization,
                 # no Execution/Verification ceremony for a greeting.
                 try:
-                    message = self._planning.answer_conversationally(draft)
+                    message = self._planning.answer_conversationally(
+                        draft, profile_id=request.profile_id
+                    )
                 except ConversationalReplyUnavailableError:
                     message = (
                         "I don't have a model configured to answer that conversationally."
                     )
+                    return InteractionResult(
+                        planning=None, run=None, task=None, message=message
+                    )
+                self._requests.record_response(request.request_id, message)
+                self._channel.conversation_turn(
+                    request_id=request.request_id, session_id=session_id
+                )
                 return InteractionResult(planning=None, run=None, task=None, message=message)
 
             planning = self._planning.create_and_plan(
