@@ -13,6 +13,7 @@ __pycache__/
 *.db
 *.code-workspace
 *.log
+.shea_logs.json
 bootstrap_demo.py
 /workspace
 README11.md

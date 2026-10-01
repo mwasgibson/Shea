@@ -219,13 +219,31 @@ class PlanningService:
         self._sessions.touch(session_id)
         return request
 
+    def _session_context_block(
+        self, session_id: str, *, exclude_request_id: str, limit: int = 6
+    ) -> str:
+        """Short-term context: the last few answered turns in this session."""
+        history = [
+            r
+            for r in self._requests.list_by_session(session_id)
+            if r.request_id != exclude_request_id and r.response is not None
+        ]
+        if not history:
+            return ""
+        recent = history[-limit:]
+        turns = "\n\n".join(f"User: {r.input}\nAssistant: {r.response}" for r in recent)
+        return f"Recent conversation:\n{turns}"
+
     def understand(self, *, request: Request, source: str = "text") -> Understanding:
         """Task-less intent parsing: no Task exists yet, so failures are
         audited against the Request only (no `task_id`, no
         `Orchestrator.advance()` — there is no task state to advance).
         On success the Intent is persisted, owned by the Request."""
+        context = self._session_context_block(
+            request.session_id, exclude_request_id=request.request_id
+        )
         try:
-            parsed = self._intent_parser.parse(request.input)
+            parsed = self._intent_parser.parse(request.input, context=context)
         except AmbiguousIntentError as exc:
             self._audit.record(
                 actor="planning_service",
@@ -422,17 +440,21 @@ class PlanningService:
 
         return plan
 
-    def answer_conversationally(self, draft: IntentDraft, *, profile_id: str) -> str:
-        """Direct reply for a pure `type == \"query\"` intent — no Task,
+    def answer_conversationally(self, draft: IntentDraft, *, request: Request) -> str:
+        """Direct reply for a pure `type == "query"` intent — no Task,
         no Plan, no `system.reply` tool wrapper. The model is asked once
         for a plain-text answer, not for JSON it has to be unwrapped
-        from afterwards."""
+        from afterwards. `request` supplies the profile and session context."""
         if self._model is None:
             raise ConversationalReplyUnavailableError(
                 "conversational reply requested but no model provider configured"
             )
-        mem_block = self._memory_context_block(profile_id=profile_id, goal=draft.goal)
-        prompt = draft.goal if not mem_block else f"{draft.goal}\n\n{mem_block}"
+        convo_block = self._session_context_block(
+            request.session_id, exclude_request_id=request.request_id
+        )
+        mem_block = self._memory_context_block(profile_id=request.profile_id, goal=draft.goal)
+        parts = [draft.goal, convo_block, mem_block]
+        prompt = "\n\n".join(part for part in parts if part)
         response = self._model.generate(prompt)
         content = response.content
         thinking = response.metadata.get("thinking")

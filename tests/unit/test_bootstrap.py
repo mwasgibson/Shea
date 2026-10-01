@@ -149,3 +149,52 @@ def test_conversational_turn_is_remembered_under_the_requests_profile(tmp_path: 
     assert [m.content for m in stored] == ["user wants JSON answers"]
     assert stored[0].provenance == request.request_id
     runtime.conn.close()
+
+
+def _queue_conversational_turn(provider: ScriptedModelProvider, reply: str) -> None:
+    """Queue one full conversational turn: classify -> answer -> memory extraction."""
+    provider.queue_response(
+        ModelResponse(
+            content="",
+            structured_data={"type": "query", "goal": "chat", "confidence": 1.0},
+        )
+    )
+    provider.queue_response(ModelResponse(content=reply))
+    provider.queue_response(ModelResponse(content="", structured_data={"memories": []}))
+
+
+def test_conversational_follow_up_sees_prior_turn(tmp_path: Path) -> None:
+    """The second conversational turn should see the previous answer in context."""
+    provider = ScriptedModelProvider()
+    _queue_conversational_turn(provider, "Paris is the capital of France.")
+    _queue_conversational_turn(provider, "About 2.1 million people.")
+
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    first = runtime.interaction_service.handle_text("what's the capital of france", run=True)
+    assert first.task is None
+
+    second = runtime.interaction_service.handle_text("what's its population", run=True)
+    assert second.task is None
+    assert second.message == "About 2.1 million people."
+
+    classify_prompt, answer_prompt, _extract_prompt = provider.calls[-3:]
+    assert "capital of france" in answer_prompt
+    assert "Paris is the capital of France." in answer_prompt
+    assert "Paris is the capital of France." in classify_prompt
+    runtime.conn.close()
+
+
+def test_conversational_context_window_is_bounded(tmp_path: Path) -> None:
+    provider = ScriptedModelProvider()
+    for i in range(8):
+        _queue_conversational_turn(provider, f"reply-{i}")
+
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+    for i in range(8):
+        runtime.interaction_service.handle_text(f"turn {i}", run=True)
+
+    _classify_prompt, answer_prompt, _extract_prompt = provider.calls[-3:]
+    assert "turn 0" not in answer_prompt
+    assert "turn 1" in answer_prompt
+    runtime.conn.close()

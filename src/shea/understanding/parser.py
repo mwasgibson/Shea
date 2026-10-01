@@ -11,12 +11,16 @@ from .exceptions import AmbiguousIntentError
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 
 
-def _build_intent_prompt(text: str) -> str:
+def _build_intent_prompt(text: str, *, context: str = "") -> str:
+    context_block = f"{context}\n\n" if context else ""
     return (
         "Extract a structured intent from the following user request. "
         "Reply with a single JSON object only, exact shape: "
         '{"type": "task" or "query", "goal": "what to accomplish", "parameters": {}, "confidence": 0.0 to 1.0}\n'
-        "IMPORTANT: If the user is just saying hello, greeting, asking factual questions, requesting information, or being conversational, set type='query' and set 'goal' to the user's explicit question or statement (do not just say 'respond conversationally'). ONLY use 'task' if the user wants to execute a command, modify a file, or perform an action.\n\n"
+        "IMPORTANT: If the user is just saying hello, greeting, asking factual questions, requesting information, or being conversational, set type='query' and set 'goal' to the user's explicit question or statement (do not just say 'respond conversationally'). ONLY use 'task' if the user wants to execute a command, modify a file, or perform an action.\n"
+        "If the request only makes sense in light of the recent conversation below (e.g. a follow-up, "
+        "a pronoun, 'that', 'it', 'the same thing'), use that context to resolve the goal.\n\n"
+        f"{context_block}"
         f"User request: {text}"
     )
 
@@ -74,20 +78,23 @@ class IntentParser:
         self._model = model_provider
         self._threshold = confidence_threshold
 
-    def parse(self, text: str) -> IntentDraft:
+    def parse(self, text: str, *, context: str = "") -> IntentDraft:
+        # Deterministic matching stays context-free: a fixed pattern must
+        # keep matching the same input the same way regardless of what
+        # was said earlier in the session.
         draft = self._matcher.match(text)
         if draft is None:
-            draft = self._parse_with_model(text)
+            draft = self._parse_with_model(text, context=context)
 
         if draft.confidence < self._threshold:
             raise AmbiguousIntentError(draft, self._threshold)
 
         return draft
 
-    def _parse_with_model(self, text: str) -> IntentDraft:
+    def _parse_with_model(self, text: str, *, context: str = "") -> IntentDraft:
         if self._model is None:
             raise MalformedModelOutputError(
                 "no deterministic match and no model provider configured"
             )
-        response = self._model.generate(_build_intent_prompt(text))
+        response = self._model.generate(_build_intent_prompt(text, context=context))
         return _draft_from_model_data(response.structured_data, source="model")

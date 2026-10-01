@@ -77,9 +77,7 @@ class InteractionService:
                 # directly. No Task, no Plan, no Decision/Authorization,
                 # no Execution/Verification ceremony for a greeting.
                 try:
-                    message = self._planning.answer_conversationally(
-                        draft, profile_id=request.profile_id
-                    )
+                    message = self._planning.answer_conversationally(draft, request=request)
                 except ConversationalReplyUnavailableError:
                     message = (
                         "I don't have a model configured to answer that conversationally."

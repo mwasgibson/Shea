@@ -30,6 +30,7 @@ class ScriptedModelProvider:
         self._capabilities = capabilities
         self._queue: list[ModelResponse] = []
         self._healthy = True
+        self.calls: list[str] = []
 
     def queue_response(self, response: ModelResponse) -> None:
         self._queue.append(response)
@@ -38,6 +39,7 @@ class ScriptedModelProvider:
         self._healthy = healthy
 
     def generate(self, prompt: str) -> ModelResponse:
+        self.calls.append(prompt)
         if not self._queue:
             raise ModelUnavailableError(self._name)
         return self._queue.pop(0)
