@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from shea.events.bus import EventBus
@@ -16,6 +17,34 @@ from shea.ports.repositories import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cheap, deterministic pre-filter for conversational turns. Extraction costs
+# a model call, and most chat ("what's the capital of France") carries
+# nothing durable — research doc 7.3: memory must not become an uncontrolled
+# archive of everything Shea has seen. Only the *user's own words* are
+# checked: preferences and facts about the user come from them, not from
+# the assistant's reply.
+#
+# Deliberate trade-off: an unusually phrased preference can slip past this
+# and go unremembered. A missed memory is cheap (the user can say it again
+# or ask Shea to "remember" it); a model call on every turn is not.
+_MEMORABLE = re.compile(
+    r"""
+    \b(
+        remember | don'?t\ forget | keep\ in\ mind | note\ that | from\ now\ on
+      | call\ me | always | never | prefer\w* | favou?rite
+      | my\ (name|birthday|job|work|wife|husband|partner|kids?|dog|cat|address|email|phone|timezone)
+      | i\ (am|'m|was|live|work|study|use|like|love|hate|dislike|want|need|have|got|usually|only)
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def looks_memorable(user_text: str) -> bool:
+    """True when the user's message plausibly states a durable preference
+    or fact worth spending a model call on."""
+    return _MEMORABLE.search(user_text) is not None
 
 
 class MemoryExtractor:
@@ -60,6 +89,8 @@ class MemoryExtractor:
             return
         request = self._request_repo.get(request_id)
         if request is None or request.response is None:
+            return
+        if not looks_memorable(request.input):
             return
         transcript = f"User said: {request.input}\nAssistant replied: {request.response}\n\n"
         self._extract(

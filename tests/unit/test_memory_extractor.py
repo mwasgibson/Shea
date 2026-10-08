@@ -178,3 +178,53 @@ def test_legacy_intent_without_request_row_falls_back_to_intent_params(
     bus.publish(_complete_task_event("task-1"))
 
     assert [p.profile_id for p in broker.proposals] == ["old-profile"]
+
+def test_looks_memorable_catches_preferences_and_facts_about_the_user() -> None:
+    from shea.memory.extractor import looks_memorable
+
+    for text in (
+        "I always want answers in JSON",
+        "remember that my dog is called Biscuit",
+        "from now on use metric units",
+        "my name is Mwas",
+        "I prefer dark mode",
+        "I live in Nairobi",
+        "call me Cipher",
+    ):
+        assert looks_memorable(text), text
+
+
+def test_looks_memorable_ignores_plain_questions() -> None:
+    from shea.memory.extractor import looks_memorable
+
+    for text in (
+        "what's the capital of france",
+        "how tall is everest",
+        "hello",
+        "what's its population",
+        "who wrote hamlet",
+    ):
+        assert not looks_memorable(text), text
+
+
+def test_unmemorable_conversation_turn_makes_no_model_call(
+    conn: sqlite3.Connection, unit_of_work: SqliteUnitOfWork
+) -> None:
+    model = ScriptedModelProvider()
+    bus, broker, requests, _ = _build(conn, unit_of_work, model)
+    plain = _request("req-9", profile_id="work", response="Paris.")
+    plain = Request(**{**plain.__dict__, "input": "what's the capital of france"})
+    requests.save(plain)
+
+    bus.publish(
+        Event(
+            event_id="e",
+            event_type="interaction.conversation_turn",
+            source="interaction",
+            timestamp=NOW,
+            payload={"request_id": "req-9", "session_id": "s"},
+        )
+    )
+
+    assert model.calls == []
+    assert broker.proposals == []

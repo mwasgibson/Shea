@@ -35,7 +35,7 @@ from shea.credentials.keyring_adapter import KeyringSecureStore
 from shea.credentials.ports import CredentialBroker
 from shea.credentials.service import CredentialService
 from shea.decision.pending import PendingConfirmationStore
-from shea.decision.policy import PolicyEngine
+from shea.decision.policy import DEFAULT_AUTHORIZATION_REQUIRED_CAPABILITIES, PolicyEngine
 from shea.decision.risk import RiskEngine
 from shea.decision.service import DecisionService
 from shea.events.bus import EventBus
@@ -346,9 +346,18 @@ def build_runtime(
 
     decision_channel = DecisionChannel(event_bus, clock, id_generator)
     pending_confirmations = PendingConfirmationStore()
+    # One policy/risk instance shared by the task path (DecisionService) and
+    # the conversational path (InteractionService), so they can never drift.
+    # `memory.write` needs authorization: Shea remembering things is a real
+    # side effect even when no Task exists.
+    policy_engine = PolicyEngine(
+        authorization_required_capabilities=DEFAULT_AUTHORIZATION_REQUIRED_CAPABILITIES
+        | {"memory.write"}
+    )
+    risk_engine = RiskEngine()
     decision_service = DecisionService(
-        policy_engine=PolicyEngine(),
-        risk_engine=RiskEngine(),
+        policy_engine=policy_engine,
+        risk_engine=risk_engine,
         orchestrator=orchestrator,
         decision_repository=decision_repository,
         pending_confirmations=pending_confirmations,
@@ -478,6 +487,9 @@ def build_runtime(
         orchestrator=orchestrator,
         request_repository=request_repository,
         interaction_channel=InteractionChannel(event_bus, clock, id_generator),
+        policy_engine=policy_engine,
+        risk_engine=risk_engine,
+        audit=audit,
     )
 
     runtime = SheaRuntime(

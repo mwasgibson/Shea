@@ -152,19 +152,23 @@ def test_conversational_turn_is_remembered_under_the_requests_profile(tmp_path: 
 
 
 def _queue_conversational_turn(provider: ScriptedModelProvider, reply: str) -> None:
-    """Queue one full conversational turn: classify -> answer -> memory extraction."""
+    """One model call: classification and the answer come back together."""
     provider.queue_response(
         ModelResponse(
             content="",
-            structured_data={"type": "query", "goal": "chat", "confidence": 1.0},
+            structured_data={
+                "type": "query",
+                "goal": "chat",
+                "confidence": 1.0,
+                "reply": reply,
+            },
         )
     )
-    provider.queue_response(ModelResponse(content=reply))
-    provider.queue_response(ModelResponse(content="", structured_data={"memories": []}))
 
 
 def test_conversational_follow_up_sees_prior_turn(tmp_path: Path) -> None:
-    """The second conversational turn should see the previous answer in context."""
+    """The second message references "its" and only makes sense with the
+    first turn's Q&A in the prompt the model sees."""
     provider = ScriptedModelProvider()
     _queue_conversational_turn(provider, "Paris is the capital of France.")
     _queue_conversational_turn(provider, "About 2.1 million people.")
@@ -173,15 +177,159 @@ def test_conversational_follow_up_sees_prior_turn(tmp_path: Path) -> None:
 
     first = runtime.interaction_service.handle_text("what's the capital of france", run=True)
     assert first.task is None
-
     second = runtime.interaction_service.handle_text("what's its population", run=True)
     assert second.task is None
     assert second.message == "About 2.1 million people."
 
-    classify_prompt, answer_prompt, _extract_prompt = provider.calls[-3:]
-    assert "capital of france" in answer_prompt
-    assert "Paris is the capital of France." in answer_prompt
-    assert "Paris is the capital of France." in classify_prompt
+    # Turn 2's single combined call carried turn 1's question and answer.
+    turn_two_prompt = provider.calls[-1]
+    assert "capital of france" in turn_two_prompt
+    assert "Paris is the capital of France." in turn_two_prompt
+    runtime.conn.close()
+
+
+def test_plain_chat_costs_exactly_one_model_call_per_turn(tmp_path: Path) -> None:
+    """Provider spend: classify + answer in one call, and nothing
+    memorable means no extraction call either."""
+    provider = ScriptedModelProvider()
+    for i in range(3):
+        _queue_conversational_turn(provider, f"reply-{i}")
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    for question in ("what's the capital of france", "how tall is everest", "who wrote hamlet"):
+        runtime.interaction_service.handle_text(question, run=True)
+
+    assert len(provider.calls) == 3
+    runtime.conn.close()
+
+
+def test_memorable_turn_costs_one_extra_call(tmp_path: Path) -> None:
+    provider = ScriptedModelProvider()
+    _queue_conversational_turn(provider, "Noted.")
+    provider.queue_response(
+        ModelResponse(
+            content="",
+            structured_data={"memories": [{"type": "PREFERENCE", "content": "likes tea"}]},
+        )
+    )
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    runtime.interaction_service.handle_text("I always drink tea in the morning", run=True)
+
+    assert len(provider.calls) == 2  # combined classify+answer, then extraction
+    assert [m.content for m in runtime.memory_service.list_active("system")] == ["likes tea"]
+    runtime.conn.close()
+
+
+def test_reply_missing_from_combined_call_falls_back_to_a_dedicated_answer_call(
+    tmp_path: Path,
+) -> None:
+    provider = ScriptedModelProvider()
+    provider.queue_response(
+        ModelResponse(
+            content="", structured_data={"type": "query", "goal": "chat", "confidence": 1.0}
+        )
+    )
+    provider.queue_response(ModelResponse(content="fallback answer"))
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    result = runtime.interaction_service.handle_text("how tall is everest", run=True)
+
+    assert result.message == "fallback answer"
+    assert len(provider.calls) == 2
+    runtime.conn.close()
+
+
+def test_thinking_from_the_combined_call_is_still_shown(tmp_path: Path) -> None:
+    provider = ScriptedModelProvider()
+    provider.queue_response(
+        ModelResponse(
+            content="",
+            structured_data={"type": "query", "goal": "chat", "confidence": 1.0, "reply": "Hi!"},
+            metadata={"thinking": "user greeted me"},
+        )
+    )
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    result = runtime.interaction_service.handle_text("hello", run=True)
+
+    assert result.message is not None
+    assert "user greeted me" in result.message
+    assert result.message.endswith("Hi!")
+    runtime.conn.close()
+
+
+def _decision_audits(runtime: object) -> list[tuple[str, str]]:
+    rows = runtime.conn.execute(  # type: ignore[attr-defined]
+        "SELECT result, metadata FROM audit_events WHERE event_type = 'decision.evaluated'"
+    ).fetchall()
+    return [(r["result"], r["metadata"]) for r in rows]
+
+
+def test_conversational_memory_write_is_policy_checked_and_audited(tmp_path: Path) -> None:
+    provider = ScriptedModelProvider()
+    _queue_conversational_turn(provider, "Noted.")
+    provider.queue_response(
+        ModelResponse(content="", structured_data={"memories": [{"type": "FACT", "content": "x"}]})
+    )
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    runtime.interaction_service.handle_text("remember that I live in Nairobi", run=True)
+
+    audits = _decision_audits(runtime)
+    assert len(audits) == 1
+    result, metadata = audits[0]
+    assert result == "allowed"
+    assert "REQUIRES_AUTHORIZATION" in metadata and "SAFE" in metadata
+    runtime.conn.close()
+
+
+def test_withheld_acknowledgement_blocks_remembering(tmp_path: Path) -> None:
+    provider = ScriptedModelProvider()
+    _queue_conversational_turn(provider, "Noted.")
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    result = runtime.interaction_service.handle_text(
+        "remember that I live in Nairobi", explicit_user_ack=False, run=True
+    )
+
+    assert result.message == "Noted."  # the reply itself is unaffected
+    assert len(provider.calls) == 1  # no extraction call was made
+    assert runtime.memory_service.list_active("system") == []
+    assert [r for r, _ in _decision_audits(runtime)] == ["blocked"]
+    runtime.conn.close()
+
+
+def test_task_planning_prompt_includes_recent_conversation(tmp_path: Path) -> None:
+    """Session context reaches the task path too: a follow-up task can
+    say "it" and the planner prompt carries what "it" was."""
+    provider = ScriptedModelProvider()
+    _queue_conversational_turn(provider, "The file is called report.txt.")
+    provider.queue_response(
+        ModelResponse(
+            content="",
+            structured_data={"type": "task", "goal": "delete that file", "confidence": 1.0},
+        )
+    )
+    provider.queue_response(
+        ModelResponse(
+            content="",
+            structured_data={
+                "steps": [
+                    {"tool": "system.reply", "action": "reply", "arguments": {"message": "ok"}}
+                ]
+            },
+        )
+    )
+    runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
+    runtime.interaction_service.handle_text("what is the file called", run=False)
+    result = runtime.interaction_service.handle_text("delete that file", run=False)
+
+    assert result.task is not None
+    plan_prompt = provider.calls[-1]
+    assert "report.txt" in plan_prompt
+    assert "Goal: delete that file" in plan_prompt
     runtime.conn.close()
 
 
@@ -189,12 +337,12 @@ def test_conversational_context_window_is_bounded(tmp_path: Path) -> None:
     provider = ScriptedModelProvider()
     for i in range(8):
         _queue_conversational_turn(provider, f"reply-{i}")
-
     runtime = build_runtime(tmp_path / "shea.db", workspace=tmp_path / "ws", model_provider=provider)
+
     for i in range(8):
         runtime.interaction_service.handle_text(f"turn {i}", run=True)
 
-    _classify_prompt, answer_prompt, _extract_prompt = provider.calls[-3:]
-    assert "turn 0" not in answer_prompt
-    assert "turn 1" in answer_prompt
+    last_prompt = provider.calls[-1]
+    assert "turn 0" not in last_prompt  # outside the 6-turn window
+    assert "turn 1" in last_prompt
     runtime.conn.close()

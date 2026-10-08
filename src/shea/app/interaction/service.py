@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from shea.contracts.enums import TaskState
-from shea.contracts.models import Decision, Plan, Task
+from shea.audit.recorder import AuditRecorder
+from shea.contracts.enums import PolicyVerdict, TaskState
+from shea.contracts.models import Decision, Plan, Request, Task
 from shea.core.orchestrator import Orchestrator
+from shea.decision.policy import PolicyEngine
+from shea.decision.risk import RiskEngine, RiskFactors
 from shea.events.channels import InteractionChannel
 from shea.execution.plan_runner import PlanRunner, PlanRunResult
 from shea.observability.context import active_context
@@ -48,12 +51,49 @@ class InteractionService:
         orchestrator: Orchestrator,
         request_repository: RequestRepository,
         interaction_channel: InteractionChannel,
+        policy_engine: PolicyEngine,
+        risk_engine: RiskEngine,
+        audit: AuditRecorder,
     ) -> None:
         self._planning = planning_service
         self._runner = plan_runner
         self._orchestrator = orchestrator
         self._requests = request_repository
         self._channel = interaction_channel
+        self._policy = policy_engine
+        self._risk = risk_engine
+        self._audit = audit
+
+    def _memory_write_permitted(self, request: Request, *, explicit_user_ack: bool) -> bool:
+        """Policy + risk gate for the one side effect a conversational
+        turn can have: Shea remembering what was said. A pure query has
+        no Task, so there is no Decision/RiskAssessment/Authorization row
+        to hang this on (those stay task-bound); the same deterministic
+        engines evaluate it instead and the verdict is audited against
+        the Request. `REQUIRES_AUTHORIZATION` is satisfied by
+        `explicit_user_ack` — a caller that wants per-turn consent passes
+        False and nothing is remembered. `DENIED` is never overridable."""
+        capabilities = frozenset({"memory.write"})
+        verdict = self._policy.evaluate(capabilities)
+        risk = self._risk.assess(RiskFactors(capabilities=capabilities, reversible=True))
+        permitted = verdict is PolicyVerdict.ALLOWED or (
+            verdict is PolicyVerdict.REQUIRES_AUTHORIZATION and explicit_user_ack
+        )
+        self._audit.record(
+            actor="interaction_service",
+            component="decision.conversational",
+            event_type="decision.evaluated",
+            action="memory.write",
+            result="allowed" if permitted else "blocked",
+            request_id=request.request_id,
+            metadata={
+                "policy_verdict": verdict.value,
+                "risk_level": risk.level.value,
+                "risk_factors": risk.factors,
+                "explicit_user_ack": explicit_user_ack,
+            },
+        )
+        return permitted
 
     def handle_text(
         self,
@@ -86,9 +126,10 @@ class InteractionService:
                         planning=None, run=None, task=None, message=message
                     )
                 self._requests.record_response(request.request_id, message)
-                self._channel.conversation_turn(
-                    request_id=request.request_id, session_id=session_id
-                )
+                if self._memory_write_permitted(request, explicit_user_ack=explicit_user_ack):
+                    self._channel.conversation_turn(
+                        request_id=request.request_id, session_id=session_id
+                    )
                 return InteractionResult(planning=None, run=None, task=None, message=message)
 
             planning = self._planning.create_and_plan(

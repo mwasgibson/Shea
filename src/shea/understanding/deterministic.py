@@ -18,6 +18,17 @@ class IntentDraft:
     parameters: dict[str, Any] = field(default_factory=dict[str, Any])
     confidence: float = 1.0
     source: str = "deterministic"
+    reply: str | None = None
+    """Set only when the model produced the conversational answer in the
+    same call as classification (the common `type == "query"` case), so
+    `PlanningService.answer_conversationally` can skip a second model
+    call. `None` for every deterministic match and whenever `type` isn't
+    `"query"` — a task is never pre-answered before it is authorized
+    and executed."""
+    thinking: str | None = None
+    """Carries that same call's `<think>` content through, so the
+    conversational-reply path can still show it even when no separate
+    answer call happens."""
 
 
 class DeterministicIntentMatcher:

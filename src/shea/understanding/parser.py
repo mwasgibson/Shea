@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from shea.contracts.models import ModelResponse
 from shea.model.exceptions import MalformedModelOutputError
 from shea.ports.model_provider import ModelProvider
 
@@ -16,21 +17,27 @@ def _build_intent_prompt(text: str, *, context: str = "") -> str:
     return (
         "Extract a structured intent from the following user request. "
         "Reply with a single JSON object only, exact shape: "
-        '{"type": "task" or "query", "goal": "what to accomplish", "parameters": {}, "confidence": 0.0 to 1.0}\n'
+        '{"type": "task" or "query", "goal": "what to accomplish", "parameters": {}, '
+        '"confidence": 0.0 to 1.0, "reply": "..." or null}\n'
         "IMPORTANT: If the user is just saying hello, greeting, asking factual questions, requesting information, or being conversational, set type='query' and set 'goal' to the user's explicit question or statement (do not just say 'respond conversationally'). ONLY use 'task' if the user wants to execute a command, modify a file, or perform an action.\n"
+        "If, and only if, type is 'query': also answer the user directly and put that answer in "
+        "'reply', in the same tone you'd use talking to them. If type is 'task', 'reply' must be "
+        "null — a task still needs authorization and execution before any reply is warranted, so "
+        "don't pre-empt that by answering as if it already happened.\n"
         "If the request only makes sense in light of the recent conversation below (e.g. a follow-up, "
-        "a pronoun, 'that', 'it', 'the same thing'), use that context to resolve the goal.\n\n"
+        "a pronoun, 'that', 'it', 'the same thing'), use that context to resolve the goal and reply.\n\n"
         f"{context_block}"
         f"User request: {text}"
     )
 
 
-def _draft_from_model_data(data: object, source: str) -> IntentDraft:
+def _draft_from_model_data(response: ModelResponse, source: str) -> IntentDraft:
+    data = response.structured_data
     if not isinstance(data, dict):
         raise MalformedModelOutputError("model response had no structured_data object")
 
-    payload = cast(dict[str, Any], data)
-    
+    payload = data
+
     try:
         intent_type = str(payload["type"])
         goal = str(payload["goal"])
@@ -48,13 +55,21 @@ def _draft_from_model_data(data: object, source: str) -> IntentDraft:
         raise MalformedModelOutputError("model response 'parameters' must be an object")
 
     typed_parameters = cast(dict[str, Any], parameters)
-    
+
+    reply = payload.get("reply")
+    if reply is not None and not isinstance(reply, str):
+        raise MalformedModelOutputError(f"model response 'reply' {reply!r} is not a string or null")
+
+    thinking = response.metadata.get("thinking") if response.metadata else None
+
     return IntentDraft(
         type=intent_type,
         goal=goal,
         parameters=typed_parameters,
         confidence=float(confidence),
         source=source,
+        reply=reply if intent_type == "query" else None,
+        thinking=thinking if isinstance(thinking, str) else None,
     )
 
 
@@ -97,4 +112,4 @@ class IntentParser:
                 "no deterministic match and no model provider configured"
             )
         response = self._model.generate(_build_intent_prompt(text, context=context))
-        return _draft_from_model_data(response.structured_data, source="model")
+        return _draft_from_model_data(response, source="model")

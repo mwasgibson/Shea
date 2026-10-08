@@ -30,10 +30,11 @@ from .templates import PlanTemplateRegistry, StepBlueprint
 from .validator import validate_plan
 
 
-def _build_plan_prompt(intent: Intent, available_tools: list[str]) -> str:
+def _build_plan_prompt(intent: Intent, available_tools: list[str], *, context: str = "") -> str:
     from datetime import datetime
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     tools_block = "\n".join(available_tools)
+    context_block = f"{context}\n\n" if context else ""
     return (
         "Produce a JSON object with a 'steps' array to accomplish this goal. "
         'Reply with a single JSON object only, exact shape: {"steps":[{"tool": "string", "action": "string", "arguments": {"key": "value"}, "description": "string"}]}. '
@@ -42,6 +43,7 @@ def _build_plan_prompt(intent: Intent, available_tools: list[str]) -> str:
         f"System Time: {current_time}\n\n"
         "Available Tools:\n"
         f"{tools_block}\n\n"
+        f"{context_block}"
         f"Goal: {intent.goal}\n"
         f"Parameters: {intent.parameters}\n"
     )
@@ -272,6 +274,8 @@ class PlanningService:
             parameters=parsed.parameters,
             confidence=parsed.confidence,
             source=source,
+            reply=parsed.reply,
+            thinking=parsed.thinking,
         )
         intent = self._new_intent(request.request_id, draft)
         self._intents.save(intent)
@@ -321,17 +325,21 @@ class PlanningService:
         else:
             draft = understanding.draft
             intent = understanding.intent
-        mem_block = self._memory_context_block(profile_id=snapshot.profile_id, goal=draft.goal)
-        if mem_block:
-            # enrich goal for template/model only — does not grant capability
-            draft = IntentDraft(
-                type=draft.type,
-                goal=f"{draft.goal}\n\n{mem_block}",
-                parameters=draft.parameters,
-                confidence=draft.confidence,
-                source=draft.source,
+        # Context rides alongside the goal, never inside it: templates match
+        # on the true goal, and the model-planning prompt gets recent turns
+        # plus recalled memory as its own block. Informs the plan only — it
+        # grants no capability.
+        context = "\n\n".join(
+            block
+            for block in (
+                self._session_context_block(
+                    request.session_id, exclude_request_id=request.request_id
+                ),
+                self._memory_context_block(profile_id=snapshot.profile_id, goal=draft.goal),
             )
-        plan = self._build_and_validate_plan(task, intent, draft)
+            if block
+        )
+        plan = self._build_and_validate_plan(task, intent, draft, context=context)
 
         with self._uow:
             if not intent_already_saved:
@@ -403,12 +411,14 @@ class PlanningService:
             created_at=self._clock.now(),
         )
 
-    def _build_and_validate_plan(self, task: Task, intent: Intent, draft: IntentDraft) -> Plan:
+    def _build_and_validate_plan(
+        self, task: Task, intent: Intent, draft: IntentDraft, *, context: str = ""
+    ) -> Plan:
         blueprints = self._templates.build(intent.type, draft)
 
         try:
             if blueprints is None:
-                blueprints = self._plan_from_model(intent)
+                blueprints = self._plan_from_model(intent, context=context)
 
             plan_id = self._ids.new_id()
             steps = [
@@ -442,9 +452,16 @@ class PlanningService:
 
     def answer_conversationally(self, draft: IntentDraft, *, request: Request) -> str:
         """Direct reply for a pure `type == "query"` intent — no Task,
-        no Plan, no `system.reply` tool wrapper. The model is asked once
-        for a plain-text answer, not for JSON it has to be unwrapped
-        from afterwards. `request` supplies the profile and session context."""
+        no Plan, no `system.reply` tool wrapper. When `draft.reply` is
+        already set, classification and the answer came back from one
+        combined model call (the common case), and that answer is
+        returned directly: no second call. Falls back to a dedicated
+        call only when that didn't happen (a deterministic match, or an
+        older/degraded model response with no `reply` field). `request`
+        supplies the profile and session context for that fallback
+        call."""
+        if draft.reply:
+            return self._format_reply(draft.reply, thinking=draft.thinking)
         if self._model is None:
             raise ConversationalReplyUnavailableError(
                 "conversational reply requested but no model provider configured"
@@ -456,13 +473,19 @@ class PlanningService:
         parts = [draft.goal, convo_block, mem_block]
         prompt = "\n\n".join(part for part in parts if part)
         response = self._model.generate(prompt)
-        content = response.content
-        thinking = response.metadata.get("thinking")
-        if thinking:
-            content = f"🤔 *Thinking...*\n> {thinking.replace(chr(10), chr(10)+'> ')}\n\n{content}"
-        return content
+        thinking = response.metadata.get("thinking") if response.metadata else None
+        return self._format_reply(
+            response.content, thinking=thinking if isinstance(thinking, str) else None
+        )
 
-    def _plan_from_model(self, intent: Intent) -> list[StepBlueprint]:
+    @staticmethod
+    def _format_reply(content: str, *, thinking: str | None) -> str:
+        if not thinking:
+            return content
+        quoted = thinking.replace("\n", "\n> ")
+        return f"🤔 *Thinking...*\n> {quoted}\n\n{content}"
+
+    def _plan_from_model(self, intent: Intent, *, context: str = "") -> list[StepBlueprint]:
         if self._model is None:
             raise PlanValidationError(
                 intent.request_id, "no plan template matched and no model provider configured"
@@ -481,5 +504,7 @@ class PlanningService:
             f"- {decl.name}: {decl.description} (Args: {_get_schema_keys(decl)})"
             for decl in self._tools.list_tools()
         ]
-        response = self._model.generate(_build_plan_prompt(intent, available_tools))
+        response = self._model.generate(
+            _build_plan_prompt(intent, available_tools, context=context)
+        )
         return _blueprints_from_model_data(response.structured_data)
