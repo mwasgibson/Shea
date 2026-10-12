@@ -12,20 +12,31 @@ from .exceptions import AmbiguousIntentError
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 
 
-def _build_intent_prompt(text: str, *, context: str = "") -> str:
+def _build_intent_prompt(text: str, *, context: str = "", with_reply: bool = True) -> str:
+    """`with_reply=True` asks for classification *and* the conversational
+    answer in one call (the cheap path). `with_reply=False` is the short,
+    classification-only prompt: the reliability fallback when the combined
+    output can't be parsed."""
     context_block = f"{context}\n\n" if context else ""
+    reply_shape = ', "reply": "..." or null' if with_reply else ""
+    reply_rule = (
+        "If, and only if, type is 'query': also answer the user directly and put that answer "
+        "in 'reply', in the same tone you'd use talking to them. If type is 'task', 'reply' "
+        "must be null — a task still needs authorization and execution before any reply is "
+        "warranted, so don't pre-empt that by answering as if it already happened.\n"
+        if with_reply
+        else ""
+    )
+    goal_and_reply = "goal and reply" if with_reply else "goal"
     return (
         "Extract a structured intent from the following user request. "
         "Reply with a single JSON object only, exact shape: "
         '{"type": "task" or "query", "goal": "what to accomplish", "parameters": {}, '
-        '"confidence": 0.0 to 1.0, "reply": "..." or null}\n'
+        f'"confidence": 0.0 to 1.0{reply_shape}}}\n'
         "IMPORTANT: If the user is just saying hello, greeting, asking factual questions, requesting information, or being conversational, set type='query' and set 'goal' to the user's explicit question or statement (do not just say 'respond conversationally'). ONLY use 'task' if the user wants to execute a command, modify a file, or perform an action.\n"
-        "If, and only if, type is 'query': also answer the user directly and put that answer in "
-        "'reply', in the same tone you'd use talking to them. If type is 'task', 'reply' must be "
-        "null — a task still needs authorization and execution before any reply is warranted, so "
-        "don't pre-empt that by answering as if it already happened.\n"
+        f"{reply_rule}"
         "If the request only makes sense in light of the recent conversation below (e.g. a follow-up, "
-        "a pronoun, 'that', 'it', 'the same thing'), use that context to resolve the goal and reply.\n\n"
+        f"a pronoun, 'that', 'it', 'the same thing'), use that context to resolve the {goal_and_reply}.\n\n"
         f"{context_block}"
         f"User request: {text}"
     )
@@ -112,4 +123,15 @@ class IntentParser:
                 "no deterministic match and no model provider configured"
             )
         response = self._model.generate(_build_intent_prompt(text, context=context))
-        return _draft_from_model_data(response, source="model")
+        try:
+            return _draft_from_model_data(response, source="model")
+        except MalformedModelOutputError:
+            # The combined classify+answer output was unusable (a model that
+            # can't keep a whole answer inside valid JSON). Fall back to the
+            # short classification-only prompt — the reliability floor before
+            # the combined call existed. A provider *outage* is a different
+            # exception and is deliberately not retried here.
+            retry = self._model.generate(
+                _build_intent_prompt(text, context=context, with_reply=False)
+            )
+            return _draft_from_model_data(retry, source="model")

@@ -38,7 +38,7 @@ python -m shea --db shea.db --workspace ./workspace run "write a note"
 python -m shea --db shea.db --workspace ./workspace run "read the note"
 
 # Or run the graphical interface (FastAPI + HTML GUI)
-# uvicorn shea.api.routes.interaction:create_router ...
+uvicorn shea.api.server:create_app --factory --host 127.0.0.1 --port 8000 --reload
 ```
 
 Demo phrases use deterministic templates (no LLM required).

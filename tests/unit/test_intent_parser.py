@@ -10,6 +10,14 @@ from shea.understanding.exceptions import AmbiguousIntentError
 from shea.understanding.parser import IntentParser
 
 
+def _queue_twice(model: ScriptedModelProvider, response: ModelResponse) -> None:
+    """A malformed combined classify+answer response triggers one retry
+    with the classification-only prompt, so a model that is *consistently*
+    malformed has to be scripted for both attempts."""
+    model.queue_response(response)
+    model.queue_response(response)
+
+
 def test_matcher_matches_registered_trigger() -> None:
     matcher = DeterministicIntentMatcher()
     matcher.register("open firefox", IntentDraft(type="application.launch", goal="open firefox"))
@@ -92,7 +100,7 @@ def test_parser_raises_when_no_match_and_no_model_configured() -> None:
 def test_parser_raises_on_missing_required_field() -> None:
     matcher = DeterministicIntentMatcher()
     model = ScriptedModelProvider()
-    model.queue_response(ModelResponse(content="", structured_data={"goal": "no type field"}))
+    _queue_twice(model, ModelResponse(content="", structured_data={"goal": "no type field"}))
 
     parser = IntentParser(matcher, model)
 
@@ -103,7 +111,7 @@ def test_parser_raises_on_missing_required_field() -> None:
 def test_parser_raises_on_invalid_confidence_type() -> None:
     matcher = DeterministicIntentMatcher()
     model = ScriptedModelProvider()
-    model.queue_response(
+    _queue_twice(model, 
         ModelResponse(
             content="",
             structured_data={"type": "x", "goal": "y", "confidence": "high"},
@@ -119,7 +127,7 @@ def test_parser_raises_on_invalid_confidence_type() -> None:
 def test_parser_raises_on_out_of_range_confidence() -> None:
     matcher = DeterministicIntentMatcher()
     model = ScriptedModelProvider()
-    model.queue_response(
+    _queue_twice(model, 
         ModelResponse(content="", structured_data={"type": "x", "goal": "y", "confidence": 1.5})
     )
 
@@ -132,7 +140,7 @@ def test_parser_raises_on_out_of_range_confidence() -> None:
 def test_parser_raises_on_non_dict_structured_data() -> None:
     matcher = DeterministicIntentMatcher()
     model = ScriptedModelProvider()
-    model.queue_response(ModelResponse(content="just prose", structured_data=None))
+    _queue_twice(model, ModelResponse(content="just prose", structured_data=None))
 
     parser = IntentParser(matcher, model)
 

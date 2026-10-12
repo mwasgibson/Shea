@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -10,7 +11,31 @@ from shea.contracts.models import ModelResponse
 from shea.model.exceptions import MalformedModelOutputError, ModelUnavailableError
 
 DEFAULT_CAPABILITIES: frozenset[str] = frozenset({"structured_output", "chat"})
+_JSON_DECODER = json.JSONDecoder(strict=False)
+_FENCE_MARKER = re.compile(r"```[A-Za-z]*\s*$")
 
+
+def _extract_json_object(text: str) -> tuple[dict[str, Any], int, int] | None:
+    """Finds the first JSON object embedded in model output.
+
+    Returns `(object, start, end)` or None. Scans `{` positions left to
+    right and lets the decoder find where each object really ends, which
+    (unlike a greedy `{.*}` or a ``` fence regex) copes with: prose before
+    or after the object, a code fence around it, braces or code fences
+    *inside* a string value, and — via `strict=False` — literal newlines
+    inside strings, which small local models emit constantly.
+    """
+    index = text.find("{")
+    while index != -1:
+        try:
+            parsed, end = _JSON_DECODER.raw_decode(text, index)
+        except json.JSONDecodeError:
+            index = text.find("{", index + 1)
+            continue
+        if isinstance(parsed, dict):
+            return cast(dict[str, Any], parsed), index, end
+        index = text.find("{", index + 1)
+    return None
 
 @dataclass
 class ModelCompatibleProvider:
@@ -134,38 +159,35 @@ class ModelCompatibleProvider:
         if not isinstance(content, str):
             raise MalformedModelOutputError("message content must be str")
 
-        import re
         clean_content = content.strip()
         thinking = None
-        
-        # 1. Check for explicit <think> tags (used by some models)
+
+        # 1. Explicit <think> tags (used by some models)
         think_match = re.search(r"<think>(.*?)</think>", clean_content, re.DOTALL)
         if think_match:
             thinking = think_match.group(1).strip()
-            clean_content = clean_content[:think_match.start()] + clean_content[think_match.end():]
-            clean_content = clean_content.strip()
+            clean_content = (
+                clean_content[: think_match.start()] + clean_content[think_match.end() :]
+            ).strip()
 
-        # 2. Check for JSON blocks (only if the prompt likely requested JSON)
+        structured: dict[str, Any] | None = None
+
+        # 2. Find the JSON object (only if the prompt asked for JSON). Whatever
+        #    precedes it is the model "thinking out loud".
         if "json" in prompt.lower():
-            match = re.search(r"```(?:json)?\n?(.*?)\n?```", clean_content, re.DOTALL)
-            if match:
+            found = _extract_json_object(clean_content)
+            if found is not None:
+                structured, start, end = found
                 if not thinking:
-                    thinking = clean_content[:match.start()].strip()
-                clean_content = match.group(1).strip()
-            else:
-                match = re.search(r"(\{.*\})", clean_content, re.DOTALL)
-                if match:
-                    if not thinking:
-                        thinking = clean_content[:match.start()].strip()
-                    clean_content = match.group(1).strip()
-
-        try:
-            parsed = json.loads(clean_content)
-            structured = (
-                cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
-            )
-        except json.JSONDecodeError:
-            structured = None
+                    preamble = _FENCE_MARKER.sub("", clean_content[:start].rstrip()).strip()
+                    thinking = preamble or None
+                clean_content = clean_content[start:end]
+        else:
+            try:
+                parsed = json.loads(clean_content, strict=False)
+                structured = cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
+            except json.JSONDecodeError:
+                structured = None
 
         return ModelResponse(
             content=clean_content,

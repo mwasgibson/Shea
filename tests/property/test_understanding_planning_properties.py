@@ -60,7 +60,9 @@ def test_missing_required_field_always_raises(missing_field: str, other_value: s
 
     matcher = DeterministicIntentMatcher()
     model = ScriptedModelProvider()
-    model.queue_response(ModelResponse(content="", structured_data=data))
+    bad = ModelResponse(content="", structured_data=data)
+    model.queue_response(bad)
+    model.queue_response(bad)  # the classification-only retry sees the same bad output
     parser = IntentParser(matcher, model)
 
     try:
