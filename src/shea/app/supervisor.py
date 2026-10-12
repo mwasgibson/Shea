@@ -353,10 +353,7 @@ class ExecutionSupervisor:
     def reconcile_stuck(self) -> list[ReconciliationResult]:
         """Startup / maintenance sweep: finalize stuck receipts without re-invoke."""
         results: list[ReconciliationResult] = []
-        list_non_finalized = getattr(self._receipts, "list_non_finalized", None)
-        if list_non_finalized is None:
-            return results
-        for receipt in list_non_finalized():
+        for receipt in self._receipts.list_unfinalized():
             results.append(self.reconcile_receipt(receipt.id))
         return results
 
