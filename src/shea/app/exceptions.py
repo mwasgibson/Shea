@@ -19,3 +19,16 @@ class ReceiptRequiredError(AppPlaneError):
         super().__init__(
             f"Refusing invoke for contract {contract_id!r}: no durable receipt"
         )
+
+class NoSideEffectError(AppPlaneError):
+    """An adapter raises this — and only this — when it can *establish*
+    that it had not yet done anything external when it failed (a rejected
+    argument, a missing prerequisite, a policy gate).
+
+    The supervisor treats it as a definite FAILURE. Every other exception
+    out of `adapter.invoke()` is treated as UNKNOWN, because by then the
+    attempt is already INVOKED and an exception proves nothing about
+    whether a side effect happened (research doc 12.13: "the operation
+    succeeds, the connection drops, Shea receives no result" is UNKNOWN,
+    not failure). Do not raise this after any external effect.
+    """

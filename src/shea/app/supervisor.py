@@ -19,7 +19,11 @@ from shea.app.enums import (
     RecoveryStatus,
 )
 from shea.app.environment import probe_environment
-from shea.app.exceptions import ContractValidationError, ReceiptRequiredError
+from shea.app.exceptions import (
+    ContractValidationError,
+    NoSideEffectError,
+    ReceiptRequiredError,
+)
 from shea.app.idempotency import IdempotencyRecord
 from shea.app.identity import IdentityResolver, IdentityRevalidator
 from shea.app.ports import (
@@ -53,6 +57,27 @@ class SupervisionResult:
     adapter_result: AdapterResult
     evidence_id: str | None = None
     verification: AppVerificationRecord | None = None
+
+
+def _definite_no_effect_errors() -> tuple[type[Exception], ...]:
+    """Exceptions that mean "stopped before anything external happened".
+
+    `SecurityViolationError` is raised only by pre-effect policy gates
+    (scope, path, destination, profile checks); an adapter must not raise
+    it after performing an external effect. Resolved lazily because
+    importing `shea.security` at module load would be circular
+    (security -> tools -> execution -> app.supervisor).
+    """
+    from shea.security.exceptions import SecurityViolationError
+
+    return (NoSideEffectError, SecurityViolationError)
+
+
+# Operations that by definition mutate nothing, so an exception out of them
+# can safely be reported as FAILURE rather than UNKNOWN.
+_SIDE_EFFECT_FREE_OPERATIONS: frozenset[str] = frozenset(
+    {"filesystem.read", "filesystem.inspect", "application.inspect"}
+)
 
 
 class ExecutionSupervisor:
@@ -196,25 +221,39 @@ class ExecutionSupervisor:
 
         try:
             result = adapter.invoke(contract, receipt, attempt)
-        except Exception as exc:
-            # noqa: BLE001 — adapters are untrusted code;
-            # anything they raise must still finalize the receipt/attempt
-            # rather than leave them dangling in ATTEMPTING/INVOKED forever.
-            # Deliberately FAILURE, not UNKNOWN: an exception raised before
-            # any external side effect was attempted (argument validation,
-            # policy checks, etc. — the common case) means nothing happened,
-            # so FAILURE is accurate. An adapter that wants to report a
-            # side effect might not have completed should catch its own
-            # OSError/TimeoutExpired-style failures internally and return
-            # AdapterResult(outcome=UNKNOWN, ...) itself, as
-            # LocalProcessAdapter already does for subprocess timeouts.
+        except _definite_no_effect_errors() as exc:
+            # The adapter (or a policy gate it called) is saying, by type,
+            # that it stopped before doing anything external: a definite
+            # FAILURE, safe to report as such.
             result = AdapterResult(
                 outcome=AppOutcome.FAILURE,
+                error=f"adapter rejected before any side effect: {exc}",
+                evidence={
+                    "receipt_id": receipt.id,
+                    "attempt_id": attempt.id,
+                    "adapter": adapter.name,
+                    "side_effect_possible": False,
+                    "exception_type": type(exc).__name__,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — adapters are untrusted code
+            # Anything else raised after the attempt was marked INVOKED is
+            # NOT proof that nothing happened: the process may have been
+            # spawned, the write may have landed, the request may have been
+            # accepted before the adapter tripped over its own bookkeeping.
+            # Claiming FAILURE would license an unsafe retry of a possibly
+            # non-idempotent action, so the outcome is UNKNOWN — except for
+            # operations that cannot have side effects at all.
+            effect_free = contract.operation in _SIDE_EFFECT_FREE_OPERATIONS
+            result = AdapterResult(
+                outcome=AppOutcome.FAILURE if effect_free else AppOutcome.UNKNOWN,
                 error=f"adapter raised: {exc}",
                 evidence={
                     "receipt_id": receipt.id,
                     "attempt_id": attempt.id,
                     "adapter": adapter.name,
+                    "side_effect_possible": not effect_free,
+                    "exception_type": type(exc).__name__,
                 },
             )
 

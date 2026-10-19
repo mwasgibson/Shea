@@ -114,5 +114,45 @@ DEFAULT_POLICIES: dict[str, VerificationPolicy] = {
 }
 
 
+# The evidence `kind` an adapter's result is stamped with, by operation
+# family. This is the single source of truth: `evidence_from_adapter`
+# stamps with it and the family fallback policies below require it, so the
+# two can never drift apart (they once did: policies required
+# "adapter.browser" while evidence was stamped "adapter.browse", making
+# every browser operation unverifiable).
+EVIDENCE_KIND_BY_FAMILY: dict[str, str] = {
+    "filesystem": "adapter.filesystem",
+    "process": "adapter.process",
+    "network": "adapter.network",
+    "application": "adapter.application",
+    "browser": "adapter.browser",
+}
+
+
+def evidence_kind_for_operation(operation: str) -> str:
+    if operation == "http.fetch":
+        return EVIDENCE_KIND_BY_FAMILY["network"]
+    family = operation.split(".", 1)[0]
+    return EVIDENCE_KIND_BY_FAMILY.get(family, "adapter.generic")
+
+
+# An operation with no policy of its own is verified against its family:
+# the adapter's own evidence of the right kind must be present. This is
+# deliberately no stronger than the old catch-all — it adds no postconditions
+# — but unlike it, it can actually be satisfied (the catch-all demanded
+# "adapter.generic" evidence that no family adapter ever produces).
+_FAMILY_POLICIES: dict[str, VerificationPolicy] = {
+    family: VerificationPolicy(
+        policy_id=f"{family}.family.v1",
+        required_evidence_kinds=frozenset({kind}),
+    )
+    for family, kind in EVIDENCE_KIND_BY_FAMILY.items()
+}
+
+
 def policy_for_operation(operation: str) -> VerificationPolicy:
-    return DEFAULT_POLICIES.get(operation, DEFAULT_POLICIES["default"])
+    exact = DEFAULT_POLICIES.get(operation)
+    if exact is not None:
+        return exact
+    family = _FAMILY_POLICIES.get(operation.split(".", 1)[0])
+    return family if family is not None else DEFAULT_POLICIES["default"]

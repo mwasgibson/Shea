@@ -84,14 +84,16 @@ class _RaisingAdapter:
         raise RuntimeError("adapter blew up unexpectedly")
 
 
-def test_supervisor_finalizes_receipt_and_attempt_when_adapter_raises() -> None:
+def test_supervisor_finalizes_receipt_and_attempt_when_adapter_raises_unexpectedly() -> None:
     """Before this fix, an adapter raising instead of returning an
     AdapterResult left the receipt stuck in ATTEMPTING and the attempt
     stuck in INVOKED forever — no outcome, no error recorded, nothing to
     reconcile against. Confirmed by direct reproduction, not just code
     review. execute() must not itself raise in this case either: the
-    exception is captured into a FAILURE AdapterResult and returned
-    normally, exactly like any other adapter-reported failure.
+    exception is captured into an AdapterResult and returned normally.
+    The outcome is UNKNOWN, not FAILURE: the attempt was already INVOKED,
+    so an unexpected exception does not prove no side effect happened
+    (see test_app_supervisor_exception_outcomes.py for the full matrix).
     """
     receipts = InMemoryReceiptRepository()
     attempts = InMemoryAttemptRepository()
@@ -115,9 +117,9 @@ def test_supervisor_finalizes_receipt_and_attempt_when_adapter_raises() -> None:
 
     assert result.receipt.state is ReceiptState.FINALIZED
     assert result.attempt.state is AttemptState.FINALIZED
-    assert result.adapter_result.outcome is AppOutcome.FAILURE
+    assert result.adapter_result.outcome is AppOutcome.UNKNOWN
     assert "adapter blew up unexpectedly" in (result.adapter_result.error or "")
     stored_receipt = receipts.get(result.receipt.id)
     assert stored_receipt is not None
     assert stored_receipt.state is ReceiptState.FINALIZED
-    assert stored_receipt.outcome is AppOutcome.FAILURE
+    assert stored_receipt.outcome is AppOutcome.UNKNOWN

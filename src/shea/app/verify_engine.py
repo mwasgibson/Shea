@@ -8,7 +8,11 @@ from typing import Any
 from shea.app.contracts import AdapterResult
 from shea.app.enums import AppOutcome, EvidenceStrength
 from shea.app.evidence import EvidenceRecord
-from shea.app.verification import AppVerificationRecord, VerificationPolicy
+from shea.app.verification import (
+    AppVerificationRecord,
+    VerificationPolicy,
+    evidence_kind_for_operation,
+)
 
 
 def _hash_payload(payload: dict[str, Any]) -> str:
@@ -25,15 +29,7 @@ def evidence_from_adapter(
     result: AdapterResult,
     observed_at: datetime,
 ) -> EvidenceRecord:
-    kind = "adapter.filesystem" if operation.startswith("filesystem.") else (
-        "adapter.process" if operation.startswith("process.") else "adapter.network"
-        if operation.startswith("network.") or operation == "http.fetch"
-        else "adapter.application"
-        if operation.startswith("application.")
-        else "adapter.browse"
-        if operation.startswith("browser.")
-        else "adapter.generic"
-    )
+    kind = evidence_kind_for_operation(operation)
     payload: dict[str,Any] = {
         "outcome": result.outcome.value,
         "error": result.error,
@@ -66,8 +62,18 @@ def evaluate_verification(
     explanation_parts: list[str] = []
     outcome = adapter_result.outcome
 
+    # Missing evidence can only ever *prevent success* or leave an outcome
+    # indeterminate; it can never establish failure. So an adapter-reported
+    # UNKNOWN stays UNKNOWN here — downgrading it to FAILURE would license a
+    # blind retry of an action that may already have happened.
+    missing = (
+        AppOutcome.UNKNOWN
+        if adapter_result.outcome is AppOutcome.UNKNOWN
+        else policy.missing_evidence_outcome
+    )
+
     if policy.required_evidence_kinds and evidence.kind not in policy.required_evidence_kinds:
-        outcome = policy.missing_evidence_outcome
+        outcome = missing
         explanation_parts.append(
             f"missing required evidence kind (have {evidence.kind})"
         )
@@ -86,7 +92,7 @@ def evaluate_verification(
         EvidenceStrength.DIRECT: 3,
     }
     if strength_order[evidence.strength] < strength_order[policy.minimum_strength]:
-        outcome = policy.missing_evidence_outcome
+        outcome = missing
         explanation_parts.append("evidence strength below policy minimum")
 
     if policy.requires_transport_verification:
@@ -101,11 +107,7 @@ def evaluate_verification(
             and tls_verified is not False
         )
         if not transport_verified:
-            outcome = (
-                AppOutcome.UNKNOWN
-                if adapter_result.outcome is AppOutcome.UNKNOWN
-                else policy.missing_evidence_outcome
-            )
+            outcome = missing
             explanation_parts.append("transport not verified")
 
     post = evidence.payload.get("postcondition")

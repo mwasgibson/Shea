@@ -10,6 +10,7 @@ from shea.app.adapters.browser_playwright import (
     playwright_available,
 )
 from shea.app.contracts import ExecutionContract
+from shea.app.exceptions import NoSideEffectError
 
 
 def test_playwright_unavailable_when_import_fails() -> None:
@@ -135,7 +136,7 @@ def test_launch_browser_falls_back_to_webkit_when_chromium_and_firefox_missing()
     mock_p.webkit.launch.assert_called_once_with(headless=True)
 
 
-def test_launch_browser_raises_runtime_error_when_all_fail() -> None:
+def test_launch_browser_raises_no_side_effect_error_when_all_fail() -> None:
     adapter = PlaywrightBrowserAdapter()
     mock_p = MagicMock()
 
@@ -143,7 +144,7 @@ def test_launch_browser_raises_runtime_error_when_all_fail() -> None:
     mock_p.firefox.launch.side_effect = Exception("Firefox failed")
     mock_p.webkit.launch.side_effect = Exception("WebKit failed")
 
-    with pytest.raises(RuntimeError, match="no supported browser binary found") as exc_info:
+    with pytest.raises(NoSideEffectError, match="no supported browser binary found") as exc_info:
         adapter._launch_browser(mock_p)  # pyright: ignore[reportPrivateUsage]
 
     error_msg = str(exc_info.value)

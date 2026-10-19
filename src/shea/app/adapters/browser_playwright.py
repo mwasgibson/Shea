@@ -16,6 +16,7 @@ from shea.app.contracts import (
     ExecutionReceipt,
 )
 from shea.app.enums import AppOutcome
+from shea.app.exceptions import NoSideEffectError
 from shea.app.ports.process import AdapterContext
 from shea.security.content_trust import UntrustedExternalData
 from shea.security.exceptions import SecurityViolationError
@@ -86,7 +87,7 @@ class PlaywrightBrowserAdapter:
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{name}: {exc}")
 
-        raise RuntimeError(
+        raise NoSideEffectError(
             "no supported browser binary found (tried chromium, firefox, webkit). "
             f"Run 'playwright install'. Details: {'; '.join(errors)}"
         )
@@ -109,7 +110,7 @@ class PlaywrightBrowserAdapter:
                 return context, name
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{name}: {exc}")
-        raise RuntimeError(
+        raise NoSideEffectError(
             "no supported browser binary found for persistent context. "
             f"Run 'playwright install'. Details: {'; '.join(errors)}"
         )
